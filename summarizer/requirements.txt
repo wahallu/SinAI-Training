@@ -1,0 +1,16 @@
+# SinhalaJournal-LLM — Summarization Pipeline Requirements
+# Install with: pip install -r requirements.txt
+
+transformers>=4.40.0
+datasets>=2.18.0
+sentencepiece>=0.2.0
+evaluate>=0.4.1
+rouge-score>=0.1.2
+accelerate>=0.29.0
+torch>=2.1.0
+tqdm>=4.66.0
+numpy>=1.26.0
+
+# Gemini API Support
+google-genai>=0.3.0
+python-dotenv>=1.0.1

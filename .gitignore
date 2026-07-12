@@ -1,24 +1,75 @@
+# --- Environment / shell / tool state (not project source) ---
 ollama/
 openclaw/
-work/sinllama/models/
-work/sinllama/unsloth_compiled_cache/
-.bash_history/
-.bash_logout/
-.bashrc/
+.openclaw/
+.openclaude/
+.openclaude.json
+.bash_history
+.bash_logout
+.bashrc
+.profile
+.gitconfig
 .cache/
 .claude/
 .claude.json
 .conda/
 .config/
 .gemini/
-.ipynb_checkpoints/
 .ipython/
 .jupyter/
 .local/
 .npm/
 .nv/
-.openclaw/
-.profile
+.nvm/
+.cargo/
+.rustup/
 .triton/
 .wget-hsts
 GEMINI.md
+how to run sinllama.txt
+
+# --- Jupyter / Python caches ---
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+__pycache__/
+**/__pycache__/
+*.pyc
+unsloth_compiled_cache/
+**/unsloth_compiled_cache/
+
+# --- Secrets ---
+*.env
+.env
+**/.env
+api_keys.txt
+**/api_keys.txt
+*.key
+*.pem
+
+# --- Models / adapters / large weights ---
+work/sinllama/models/
+summarizer/models/
+**/checkpoint-*/
+*.safetensors
+*.bin
+*.pt
+*.gguf
+nltk_data/
+
+# --- Datasets (large, regenerable, or data not source) ---
+work/sinllama/data/
+summarizer/data/
+summarizer/*.jsonl
+summarizer/*.json
+style_rewriter/data/
+*.jsonl
+
+# --- Generated results / eval outputs ---
+work/sinllama/results/
+summarizer/eval_results/
+work/sinllama/scripts/test_metrics_results.json
+work/sinllama/headline_eval_results_v*.json
+work/sinllama/test_metrics_results.json
+
+# --- Old scratch scripts ---
+work/sinllama/scripts/scripts_old/
