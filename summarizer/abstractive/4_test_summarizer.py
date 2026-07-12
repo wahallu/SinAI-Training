@@ -17,9 +17,10 @@ import random
 import argparse
 import warnings
 import time
+import unicodedata
 from pathlib import Path
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 import torch
 import numpy as np
@@ -28,12 +29,75 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
-from rouge_score import rouge_scorer
 from transformers import AutoTokenizer
 from unsloth import FastLanguageModel
 from peft import PeftModel
 
 warnings.filterwarnings("ignore")
+
+
+# ──────────────────────────────────────────────────────────────
+# NATIVE SINHALA ROUGE (grapheme clusters — rouge_score library
+# breaks on Sinhala Unicode)
+# ──────────────────────────────────────────────────────────────
+def sinhala_tokenize(text: str) -> list:
+    tokens = []
+    chars = list(text)
+    i = 0
+    while i < len(chars):
+        cluster = chars[i]
+        i += 1
+        while i < len(chars) and unicodedata.combining(chars[i]):
+            cluster += chars[i]
+            i += 1
+        if cluster.strip():
+            tokens.append(cluster)
+    return tokens
+
+
+def rouge_scores(pred: str, ref: str) -> dict:
+    def ngrams(tokens, n):
+        return Counter(tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1))
+
+    def lcs_length(a, b):
+        m, n = len(a), len(b)
+        prev = [0] * (n + 1)
+        curr = [0] * (n + 1)
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if a[i-1] == b[j-1]:
+                    curr[j] = prev[j-1] + 1
+                else:
+                    curr[j] = max(prev[j], curr[j-1])
+            prev, curr = curr, [0] * (n + 1)
+        return prev[n]
+
+    pred_toks = sinhala_tokenize(pred)
+    ref_toks  = sinhala_tokenize(ref)
+    if not pred_toks or not ref_toks:
+        return {"rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0}
+
+    p1 = ngrams(pred_toks, 1)
+    r1 = ngrams(ref_toks,  1)
+    c1 = sum((p1 & r1).values())
+    prec1 = c1 / len(pred_toks)
+    rec1  = c1 / len(ref_toks)
+    f1_1  = 2*prec1*rec1/(prec1+rec1) if (prec1+rec1) else 0.0
+
+    p2 = ngrams(pred_toks, 2)
+    r2 = ngrams(ref_toks,  2)
+    c2 = sum((p2 & r2).values())
+    prec2 = c2 / max(len(pred_toks)-1, 1)
+    rec2  = c2 / max(len(ref_toks)-1,  1)
+    f1_2  = 2*prec2*rec2/(prec2+rec2) if (prec2+rec2) else 0.0
+
+    lcs = lcs_length(pred_toks, ref_toks)
+    precL = lcs / len(pred_toks)
+    recL  = lcs / len(ref_toks)
+    f1_L  = 2*precL*recL/(precL+recL) if (precL+recL) else 0.0
+
+    return {"rouge1": f1_1, "rouge2": f1_2, "rougeL": f1_L}
+
 
 # ──────────────────────────────────────────────────────────────
 # PATHS
@@ -188,15 +252,14 @@ def sample_records(records: list[dict], n: int, seed: int) -> list[dict]:
 # METRICS
 # ──────────────────────────────────────────────────────────────
 def compute_rouge(predictions: list[str], references: list[str]) -> dict:
-    scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=False)
     scores = defaultdict(list)
     per_sample = []
 
     for pred, ref in zip(predictions, references):
-        s = scorer.score(ref, pred)
+        s = rouge_scores(pred, ref)
         for key in ("rouge1", "rouge2", "rougeL"):
-            scores[key].append(s[key].fmeasure)
-        per_sample.append({k: round(s[k].fmeasure, 4) for k in ("rouge1", "rouge2", "rougeL")})
+            scores[key].append(s[key])
+        per_sample.append({k: round(s[k], 4) for k in ("rouge1", "rouge2", "rougeL")})
 
     return {
         "mean": {k: float(np.mean(v)) for k, v in scores.items()},
@@ -209,10 +272,9 @@ def compute_rouge(predictions: list[str], references: list[str]) -> dict:
 
 def compute_rouge_by_category(samples, predictions) -> dict:
     cat_scores = defaultdict(list)
-    scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
     for rec, pred in zip(samples, predictions):
-        s = scorer.score(rec["summary"], pred)
-        cat_scores[rec["category"]].append(s["rougeL"].fmeasure)
+        s = rouge_scores(pred, rec["summary"])
+        cat_scores[rec["category"]].append(s["rougeL"])
     return {cat: round(float(np.mean(v)), 4) for cat, v in sorted(cat_scores.items())}
 
 
@@ -543,8 +605,6 @@ def main(n_samples: int = DEFAULT_SAMPLES, seed: int = SEED, use_all: bool = Fal
     predictions = []
     latencies = []
 
-    rouge_scorer_obj = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=False)
-
     for i, rec in enumerate(samples):
         predicted, elapsed = generate_summary(model, tokenizer, rec["content"])
 
@@ -553,8 +613,8 @@ def main(n_samples: int = DEFAULT_SAMPLES, seed: int = SEED, use_all: bool = Fal
         predictions.append(predicted)
         latencies.append(elapsed)
 
-        s = rouge_scorer_obj.score(rec["summary"], predicted)
-        per_scores = {k: round(s[k].fmeasure, 4) for k in ("rouge1", "rouge2", "rougeL")}
+        s = rouge_scores(predicted, rec["summary"])
+        per_scores = {k: round(s[k], 4) for k in ("rouge1", "rouge2", "rougeL")}
         pred_words = len(predicted.split())
         art_words = len(rec["content"].split())
         ref_words = len(rec["summary"].split())
