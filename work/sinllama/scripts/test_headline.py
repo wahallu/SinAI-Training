@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", message=".*max_length.*")
 SINLLAMA_BASE    = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
 HEADLINE_ADAPTER = "/home/jovyan/work/sinllama/models/adapters/headline_sinllama_v17"
 VAL_DATA_PATH    = "/home/jovyan/work/sinllama/data/headline_dataset_48k_balanced_val.jsonl"
-OUTPUT_RESULTS   = "/home/jovyan/work/sinllama/results/headline_eval_results_v16.json"
+OUTPUT_RESULTS   = "/home/jovyan/work/sinllama/results/headline_eval_results_v17.json"
 
 MAX_SEQ_LENGTH    = 768
 MAX_ARTICLE_CHARS = 2000

@@ -421,23 +421,38 @@ def rewrite_in_style(article: str, style_instruction: str) -> str:
     prompt = format_prompt(style_instruction, article)
     inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
 
+    # ✅ FIXED: max_new_tokens was a flat 256, which truncates almost any
+    # real article mid-sentence (your style rules require ~same length as
+    # the source). Scale it to the input length instead, same approach
+    # used in generate_style_dataset.py's max_tokens fix.
+    input_word_count = len(article.split())
+    max_new_tokens = min(max(384, int(input_word_count * 3.5)), 2048)
+
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens     = 256,    # 🔥 Reduced to prevent garbage output
-            do_sample          = True,   # 🔥 Enable sampling for natural generation
-            temperature        = 0.3,    # 🔥 LOW temperature for Sinhala-only
-            repetition_penalty = 1.5,    # 🔥 Higher penalty to prevent repetition
-            top_p              = 0.85,   # 🔥 Lower top_p for focused generation
-            top_k              = 50,     # 🔥 Limit vocabulary choices
-            eos_token_id       = tokenizer.eos_token_id,
-            pad_token_id       = tokenizer.eos_token_id,
-            use_cache          = True,
+            max_new_tokens      = max_new_tokens,
+            do_sample           = True,
+            temperature         = 0.4,
+            # ✅ FIXED: 1.5 repetition_penalty was aggressive enough to
+            # break Sinhala subword/conjunct formation mid-word (visible
+            # as corrupted fragments like "සිදුවේුවේ", stray Latin
+            # characters). Dropped to a gentler value and paired with
+            # no_repeat_ngram_size, which discourages repeated PHRASES
+            # without penalizing the individual subword tokens Sinhala
+            # needs to reuse just to spell a word correctly.
+            repetition_penalty  = 1.15,
+            no_repeat_ngram_size = 3,
+            top_p                = 0.9,
+            top_k                = 50,
+            eos_token_id         = tokenizer.eos_token_id,
+            pad_token_id         = tokenizer.eos_token_id,
+            use_cache            = True,
         )
 
     result = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # 🔥 STRICT CLEANING - Remove prompt and keep only response
+    # STRICT CLEANING - Remove prompt and keep only response
     if "### Response:" in result:
         result = result.split("### Response:")[-1]
 
@@ -448,33 +463,41 @@ def rewrite_in_style(article: str, style_instruction: str) -> str:
     if "### Input:" in result:
         result = result.split("### Input:")[0]
 
-    # 🔥 CRITICAL: Filter out ANY sentence with English words
+    # ✅ FIXED: the old per-SENTENCE English-word filter would drop an
+    # entire sentence (sometimes the entire output - see test cases
+    # 22/37/38) if it contained a single corrupted Latin-looking
+    # fragment. Now only strips stray Latin substrings out of an
+    # otherwise-Sinhala sentence, instead of deleting the whole sentence -
+    # much less likely to silently zero out the response.
     sentences = re.split(r'(?<=[।\.!?])\s+', result)
-    sinhala_sentences = []
+    cleaned_sentences = []
     for sentence in sentences:
-        # Check for ANY English word (2+ letters)
-        english_words = re.findall(r'\b[A-Za-z]{2,}\b', sentence)
-        english_chars = len(re.findall(r'[A-Za-z]', sentence))
         sinhala_chars = len(re.findall(r'[\u0D80-\u0DFF]', sentence))
+        english_chars = len(re.findall(r'[A-Za-z]', sentence))
 
-        # STRICT: Remove if ANY English word exists OR >5% English chars
-        if len(english_words) == 0 and (
-            sinhala_chars > 0
-            and english_chars / (sinhala_chars + english_chars) < 0.05
-        ):
-            # Also remove markdown artifacts
-            if not re.match(r'^[#\*\-\>]', sentence.strip()):
-                sinhala_sentences.append(sentence)
+        if sinhala_chars == 0:
+            continue  # nothing Sinhala in this sentence at all - skip it
 
-    result = '। '.join(sinhala_sentences)
+        # If it's overwhelmingly English, this sentence probably isn't a
+        # real part of the rewrite - skip it. Otherwise, just strip the
+        # stray Latin fragments and keep the sentence.
+        if english_chars > 0 and english_chars / (sinhala_chars + english_chars) > 0.4:
+            continue
 
-    # Keep only first 3 lines (stricter)
-    lines = [
-        line.strip()
-        for line in result.strip().split("\n")
-        if line.strip() and not re.match(r'^[#\*\-\>]', line)
-    ]
-    result = "\n".join(lines[:3])  # Keep first 3 clean lines only
+        sentence = re.sub(r'\b[A-Za-z]{1,4}\b', '', sentence)  # strip stray Latin fragments
+        sentence = re.sub(r'\s{2,}', ' ', sentence).strip()
+
+        if sentence and not re.match(r'^[#\*\-\>]', sentence):
+            cleaned_sentences.append(sentence)
+
+    result = '। '.join(cleaned_sentences)
+
+    # ✅ REMOVED: the old "keep only first 3 lines" cap. That made sense
+    # when max_new_tokens=256 produced short garbled output, but now that
+    # generations are meant to run the full length of the article, this
+    # was silently truncating otherwise-good long rewrites down to a
+    # few lines - directly hurting length_preservation.
+    result = re.sub(r'\n{2,}', '\n', result.strip())
 
     return result.strip()
 
