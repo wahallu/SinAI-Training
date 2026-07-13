@@ -166,8 +166,7 @@ def load_model():
 def generate_summary(model, tokenizer, article: str) -> tuple[str, float]:
     """Deterministic summary generation for evaluation."""
     word_count = len(article.split())
-    # A loose cap, still driven by article size.
-    dynamic_limit = max(40, min(120, int(word_count * 0.25)))
+    dynamic_limit = max(40, min(120, int(word_count * 0.20)))
 
     prompt = build_prompt(article)
     inputs = tokenizer(
@@ -194,8 +193,18 @@ def generate_summary(model, tokenizer, article: str) -> tuple[str, float]:
         )
     elapsed = time.time() - t0
 
-    new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
-    summary = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+    # Decode full output and split on the assistant header to avoid
+    # sub-character token boundary issues that drop the first grapheme cluster.
+    ASSISTANT_HEADER = "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    full_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
+    if ASSISTANT_HEADER in full_text:
+        summary = full_text.split(ASSISTANT_HEADER, 1)[1]
+        # Strip trailing EOS/special tokens
+        summary = summary.split("<|eot_id|>")[0].strip()
+    else:
+        # Fallback: strip special tokens and take new tokens only
+        new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
+        summary = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
     return summary, elapsed
 
 
