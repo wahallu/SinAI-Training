@@ -332,8 +332,8 @@ def worker(api_key, input_queue, output_file, lock, pbar, model_name, rate_limit
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="/home/jovyan/style_rewriter/data/train.jsonl")
-    parser.add_argument("--output", default="/home/jovyan/style_rewriter/data/style_dataset.jsonl")
+    parser.add_argument("--input", default="/home/jovyan/style_rewriter/data/train1.jsonl")
+    parser.add_argument("--output", default="/home/jovyan/style_rewriter/data/style_dataset2.jsonl")
     parser.add_argument("--concurrency", type=int, default=3)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(

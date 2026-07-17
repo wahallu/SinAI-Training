@@ -19,12 +19,16 @@ from transformers import (
 # PATHS
 # ──────────────────────────────────────────────
 SINLLAMA_BASE   = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
-OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v07"  # v06 for improved version
+# ✅ UPDATED: v06/v07 → v08, trained on the new larger dataset below
+OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v08"
 
-# ✅ UPDATED: points at the raw output of generate_style_dataset.py
-# (content / style / rewritten_text schema) instead of the old
-# pre-converted stage2 format (instruction / input / output / metadata).
-TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset.jsonl"
+# ✅ UPDATED: points at the new, larger generated dataset (~10,866 rows,
+# ~2,173 articles × 5 styles - up from ~784 articles used for v07).
+# More data per style is the main lever for the corruption/generalization
+# issues seen in v07's eval - see training notes below for sizing
+# rationale (500-1000 examples/style = surface patterns only,
+# 2000-5000/style = where genuine generalization starts).
+TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_dub.jsonl"
 
 
 # ──────────────────────────────────────────────
@@ -34,8 +38,13 @@ TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset.jsonl"
 MAX_SEQ_LENGTH    = 4096
 LORA_RANK         = 32          # Increased from 16 for better capacity
 LORA_ALPHA        = 64          # Increased from 32
-LORA_DROPOUT      = 0.05
-NUM_EPOCHS        = 8           # Increased from 5
+LORA_DROPOUT       = 0.05
+# ✅ REDUCED: 8 → 5. The v07 run used ~784 articles/style with 8 epochs -
+# that's a lot of passes over a small set, and is a likely contributor to
+# the character-level corruption seen in eval (surface style markers
+# learned fine, but overfitting degraded general fluency). With ~2700
+# more articles now, fewer epochs are needed and overfitting risk drops.
+NUM_EPOCHS        = 5
 BATCH_SIZE        = 2
 GRAD_ACCUMULATION = 8
 LEARNING_RATE     = 2e-4
@@ -123,7 +132,14 @@ def format_prompt(instruction: str, article: str, rewritten: str) -> str:
         "3. Do NOT add unrelated content (no greetings, no cricket references unless in original)\n"
         "4. Do NOT change the meaning of any fact\n"
         "5. Do NOT add new facts or events\n"
-        "6. Apply the style while preserving ALL factual content\n\n"
+        "6. Apply the style while preserving ALL factual content\n"
+        # ✅ NEW: eval showed low BLEU/ROUGE-2 despite good style
+        # markers - a likely cause is the model paraphrasing names,
+        # numbers, and dates while restyling the surrounding sentence,
+        # which breaks exact n-gram overlap even when the fact itself
+        # is preserved. This makes that constraint explicit.
+        "7. Keep all names, numbers, and dates in EXACTLY their original "
+        "wording - only change sentence structure and tone around them\n\n"
         "### Input:\n"
         f"{article}\n\n"
         "### Response:\n"
