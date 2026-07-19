@@ -2,7 +2,7 @@ import os
 os.environ["NCCL_P2P_DISABLE"] = "1"
 os.environ["NCCL_IB_DISABLE"]  = "1"
 
-from unsloth import FastLanguageModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -37,13 +37,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name          = model_path,
-    dtype               = torch.bfloat16,
-    load_in_4bit        = True,
-    local_files_only    = True,
-    device_map          = "auto",
-    attn_implementation = "eager",
+quant_config = BitsAndBytesConfig(
+    load_in_4bit              = True,
+    bnb_4bit_compute_dtype    = torch.bfloat16,
+    bnb_4bit_quant_type       = "nf4",
+    bnb_4bit_use_double_quant = True,
+)
+
+tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+model = AutoModelForCausalLM.from_pretrained(
+    model_path,
+    quantization_config  = quant_config,
+    dtype          = torch.bfloat16,
+    local_files_only     = True,
+    device_map           = "auto",
+    attn_implementation  = "eager",
 )
 
 
@@ -75,20 +83,26 @@ for _name in _adapter_names[1:]:
 model.set_adapter(_adapter_names[0])   # arbitrary initial default; every request sets it explicitly
 LOADED_ADAPTERS = set(_adapter_names)  # used by /health, /tasks
 
-# NOTE: FastLanguageModel.for_inference(model) is intentionally NOT called.
-# It switches model.generate() onto Unsloth's fused fast-decode kernels,
-# which index each LoRA-wrapped module's lora_A[active_adapter] /
-# lora_B[active_adapter] directly with no fallback. Our adapters don't all
-# target the same modules — grammar_sinllama_v13 only targets attention
-# projections (q/k/v/o_proj), while headline/style/summarizer also target
-# the MLP projections (gate/up/down_proj). Those MLP Linear layers get
-# wrapped once and shared across every adapter that touches them, so
-# switching the active adapter to "grammar" hits a KeyError inside
-# Unsloth's fast MLP kernel (fast_swiglu_inference -> get_lora_parameters_bias)
-# because "grammar" was never added to that layer's lora_A/lora_B dict.
-# Standard PEFT eager forward tolerates this — it skips LoRA entirely on a
-# module an adapter doesn't target. Staying on eager generation trades some
-# speed for correctness across all four structurally-different adapters.
+# NOTE: This server loads the base model via plain transformers (not
+# Unsloth's FastLanguageModel), specifically to avoid Unsloth's fused
+# fast-decode kernels. Those kernels index each LoRA-wrapped module's
+# lora_A[active_adapter] / lora_B[active_adapter] directly with no fallback,
+# and are activated unconditionally on any cached model.generate() call once
+# a model is loaded through FastLanguageModel — calling (or skipping)
+# FastLanguageModel.for_inference() has no effect on this, contrary to what
+# an earlier version of this file assumed. Our adapters don't all target the
+# same modules — grammar_sinllama_v13 only targets attention projections
+# (q/k/v/o_proj), while headline/style/summarizer also target the MLP
+# projections (gate/up/down_proj). Those MLP Linear layers get wrapped once
+# and shared across every adapter that touches them, so switching the active
+# adapter to "grammar" hit a KeyError inside Unsloth's fast MLP kernel
+# (fast_swiglu_inference -> get_lora_parameters_bias) because "grammar" was
+# never added to that layer's lora_A/lora_B dict. This is a known upstream
+# limitation (unslothai/unsloth#2322), not something fixable from adapter
+# config alone. Standard PEFT eager forward (what plain transformers uses)
+# tolerates this correctly — it skips LoRA entirely on a module an adapter
+# doesn't target. This trades Unsloth's fused-kernel decode speed for
+# correctness across all four structurally-different adapters.
 model.eval()
 
 
