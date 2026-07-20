@@ -13,7 +13,7 @@ import json
 #    Same as test script — no more 4-step chain
 SINLLAMA_BASE = "./models/SinLLaMA-merged-base"
 DATA_PATH     = "data/grammar_manual_dataset_stage5.jsonl"
-OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v13"
+OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v14"
 
 # ✅ INCREASED: was 256 — paragraphs need more space
 #    Single sentence: ~50-80 tokens

@@ -19,15 +19,12 @@ from transformers import (
 # PATHS
 # ──────────────────────────────────────────────
 SINLLAMA_BASE   = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
-# ✅ UPDATED: v06/v07 → v08, trained on the new larger dataset below
-OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v08"
+# ✅ UPDATED: v08 → v09, trained on the new, much larger dataset below
+OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v09"
 
-# ✅ UPDATED: points at the new, larger generated dataset (~10,866 rows,
-# ~2,173 articles × 5 styles - up from ~784 articles used for v07).
-# More data per style is the main lever for the corruption/generalization
-# issues seen in v07's eval - see training notes below for sizing
-# rationale (500-1000 examples/style = surface patterns only,
-# 2000-5000/style = where genuine generalization starts).
+# ✅ UPDATED: points at the new dataset (~22,237 articles - up from ~2,173
+# for v08). NOTE: confirm this exact filename/path matches what you
+# generated - update if it differs.
 TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_dub.jsonl"
 
 
@@ -36,18 +33,30 @@ TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_dub.jsonl"
 # ──────────────────────────────────────────────
 # ✅ INCREASED: 2048 → 4096 (Sinhala needs more tokens)
 MAX_SEQ_LENGTH    = 4096
-LORA_RANK         = 32          # Increased from 16 for better capacity
-LORA_ALPHA        = 64          # Increased from 32
+# ✅ REDUCED: 32 → 16. The v08 run showed a large train/eval loss gap
+# (train_loss=0.4764, eval_loss=1.087 - more than 2x) indicating
+# overfitting. More trainable capacity gives the model more room to
+# memorize repeated style boilerplate instead of learning the underlying
+# transformation. With ~22,237 articles now (up from ~2,173), less
+# capacity per example is needed anyway.
+LORA_RANK         = 16
+LORA_ALPHA        = 32          # halved alongside rank to keep the alpha/rank ratio
 LORA_DROPOUT       = 0.05
-# ✅ REDUCED: 8 → 5. The v07 run used ~784 articles/style with 8 epochs -
-# that's a lot of passes over a small set, and is a likely contributor to
-# the character-level corruption seen in eval (surface style markers
-# learned fine, but overfitting degraded general fluency). With ~2700
-# more articles now, fewer epochs are needed and overfitting risk drops.
-NUM_EPOCHS        = 5
+# ✅ REDUCED: 5 → 3. Same overfitting evidence as above - with ~10x more
+# articles than the v08 run, fewer passes are needed, and the v08
+# train/eval loss gap suggests 5 epochs was already too many for the
+# effective amount of genuinely new content per epoch (a lot of every
+# example's tokens are repeated style boilerplate, which the model can
+# memorize quickly).
+NUM_EPOCHS        = 3
 BATCH_SIZE        = 2
 GRAD_ACCUMULATION = 8
 LEARNING_RATE     = 2e-4
+# ✅ NEW: was not set at all before (defaults to 0.0 in TrainingArguments).
+# Standard, low-cost overfitting countermeasure - penalizes large weights,
+# directly discouraging the kind of memorization behind the train/eval
+# loss gap seen in v08.
+WEIGHT_DECAY      = 0.01
 TRAIN_SPLIT       = 0.85
 SEED              = 42
 WARMUP_STEPS      = 50          # Increased from 16
@@ -433,6 +442,7 @@ def main():
         per_device_eval_batch_size  = BATCH_SIZE,
         gradient_accumulation_steps = GRAD_ACCUMULATION,
         learning_rate               = LEARNING_RATE,
+        weight_decay                = WEIGHT_DECAY,
         warmup_steps                = WARMUP_STEPS,
         bf16                        = True,
         logging_steps               = 10,
@@ -483,6 +493,7 @@ def main():
         "lora_alpha": LORA_ALPHA,
         "num_epochs": NUM_EPOCHS,
         "learning_rate": LEARNING_RATE,
+        "weight_decay": WEIGHT_DECAY,
         "batch_size": BATCH_SIZE,
         "grad_accumulation": GRAD_ACCUMULATION,
         "train_samples": len(train_dataset),
