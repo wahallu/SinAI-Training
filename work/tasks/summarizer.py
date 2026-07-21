@@ -28,15 +28,29 @@ def prompt_summarizer(text: str, **_) -> str:
 
 
 def max_new_tokens(raw_text: str, prompt_token_len: int) -> int:
-    """Started as the 20%/120-cap formula from generate_summary() in
-    summarizer/abstractive/4_test_summarizer.py, but that was tuned against
-    that script's own (shorter) test set — real multi-paragraph articles hit
-    the cap and got truncated mid-sentence. Widened to 30%/150, anchored on
-    the adapters' own training-time MAX_SUMMARY_TOKENS=150 ceiling (see
-    summarizer/abstractive/2_train_summarizer_llama4.py) rather than
-    guessing further."""
+    """Calibrated directly from an audit of 5_qwen_summaries.jsonl (v05's
+    actual training data) rather than guessed: of 151,438 raw Qwen-generated
+    silver summaries, 73.6% get rejected by 5_train_summarizer_qwen.py's own
+    MIN/MAX_COMP_RATIO + MAX_SUMMARY_TOKENS filters (Qwen's natural output
+    averages ~55% compression despite being instructed to produce 10-30%).
+    Of the 26.4% that survive and the model actually trains on, compression
+    ratio (summary_words / article_words) clusters at median=0.408,
+    P75=0.460, P90=0.486 — roughly 50% higher than the 20-30% this function
+    previously assumed, which is why summaries kept truncating no matter how
+    much the budget was raised: the model was trained to want ~45-49% of the
+    article's length, not 20-30% of it.
+
+    Uses P90 (~0.49) as the target ratio so most articles get enough budget
+    to finish. Word->token multiplier and buffer are kept generous (not
+    precisely measured) because over-provisioning is ~free: generation
+    already stops early via <|eot_id|>/stopping criteria once the model
+    naturally finishes, so a bigger ceiling only matters when the model
+    actually wants to keep going. Hard-capped near training's own
+    MAX_SUMMARY_TOKENS=150 ceiling (+ buffer) — no training example ever had
+    a longer summary than that, so there's no basis for budgeting past it."""
     word_count = len(raw_text.split())
-    return max(40, min(150, int(word_count * 0.30)))
+    target_words = word_count * 0.49
+    return max(40, min(int(target_words * 3.0) + 30, 180))
 
 
 REPETITION_PENALTY = 1.15
