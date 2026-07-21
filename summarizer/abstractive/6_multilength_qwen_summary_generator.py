@@ -216,10 +216,16 @@ class GroqKeyPool:
     """Client-side enforcement of Groq free-tier limits across N keys.
 
     Each key gets its own rolling 60s RPM/TPM windows and daily RPD/TPD
-    budgets. acquire() blocks until SOME key has a free slot and returns that
-    key; returns None once every key's daily budget is spent (signal to stop
-    for the day). Token accounting uses actual `usage.total_tokens` reported
-    by the API, recorded per key via record_usage().
+    budgets. acquire() RESERVES the estimated token cost up front — without
+    the reservation, N workers all acquire before any response comes back,
+    every key's window still looks empty, the combined burst blows the
+    server-side TPM, and every key 429s at once (exactly what happened on
+    the first live run). settle() replaces the estimate with the actual
+    usage from the API response once known, or releases it if the request
+    never consumed tokens (429/network error).
+
+    acquire() blocks until SOME key has a free slot and returns that key;
+    returns None once every key's daily budget is spent (stop for the day).
     """
 
     def __init__(self, keys: list):
@@ -227,8 +233,9 @@ class GroqKeyPool:
         self.states = {k: _KeyState(k) for k in keys}
 
     def acquire(self, est_tokens: int) -> str | None:
-        """Block until a request may be sent. Returns the key to use, or
-        None when every key's daily budget is exhausted."""
+        """Block until a request may be sent. Reserves est_tokens against
+        the chosen key. Returns the key, or None when every key's daily
+        budget is exhausted."""
         while True:
             with self.lock:
                 now = time.time()
@@ -248,6 +255,9 @@ class GroqKeyPool:
                             and minute_tokens + est_tokens <= TPM_LIMIT):
                         st.req_times.append(now)
                         st.day_requests += 1
+                        # Reserve now; settle() adjusts to actual later.
+                        st.token_events.append((now, est_tokens))
+                        st.day_tokens += est_tokens
                         return st.key
 
                     waits = []
@@ -271,11 +281,21 @@ class GroqKeyPool:
                 wait = next_wait if next_wait is not None else 1.0
             time.sleep(max(0.1, min(wait, 10.0)))
 
-    def record_usage(self, key: str, tokens: int):
+    def settle(self, key: str, est_tokens: int, actual_tokens: int | None):
+        """Correct the acquire()-time reservation once the outcome is known.
+
+        actual_tokens=None means the request consumed nothing server-side
+        (429, connection error) — release the whole reservation. Correction
+        entries share the rolling window; a negative correction ages out
+        together with its reservation, so the window sum stays honest.
+        """
+        delta = (actual_tokens if actual_tokens is not None else 0) - est_tokens
+        if delta == 0:
+            return
         with self.lock:
             st = self.states[key]
-            st.token_events.append((time.time(), tokens))
-            st.day_tokens += tokens
+            st.token_events.append((time.time(), delta))
+            st.day_tokens = max(0, st.day_tokens + delta)
 
     def cooldown(self, key: str, seconds: float):
         with self.lock:
@@ -298,16 +318,25 @@ class GroqKeyPool:
 
 
 def load_processed_urls(output_path: Path) -> set:
+    """URLs to skip on resume. Only records that produced at least one
+    summary (or are permanently unusable, e.g. too-short articles) count as
+    processed — transient failures (429 storms, timeouts, truncations) are
+    deliberately NOT skipped, so a re-run retries them."""
+    PERMANENT_ERRORS = {"article_too_short", "article_too_long_for_tpm"}
     processed = set()
     if output_path.exists():
         with open(output_path, "r", encoding="utf-8") as f:
             for line in f:
                 try:
                     data = json.loads(line)
-                    if "url" in data:
-                        processed.add(data["url"])
                 except Exception:
                     continue
+                if "url" not in data:
+                    continue
+                has_summary = any(data.get(f"summary_{b}") for b in LENGTH_BUCKETS)
+                permanent = data.get("error") in PERMANENT_ERRORS
+                if has_summary or permanent:
+                    processed.add(data["url"])
     return processed
 
 
@@ -363,13 +392,15 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                 "top_p": 1.0,
                 "stream": False,
             }
-            est_total = est_prompt_tokens + MAX_COMPLETION_TOKENS
 
             success = False
             retries = 0
             last_error = ""
 
             while not success and retries < MAX_RETRIES:
+                # Reservation must track the current max_tokens (which grows
+                # on truncated retries).
+                est_total = est_prompt_tokens + payload["max_tokens"]
                 api_key = pool.acquire(est_total)
                 if api_key is None:
                     last_error = "daily_budget_exhausted"
@@ -387,7 +418,12 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                             usage = response.json().get("usage", {}) or {}
                         except Exception:
                             usage = {}
-                    pool.record_usage(api_key, int(usage.get("total_tokens", est_total)))
+                    if response.status_code == 200:
+                        pool.settle(api_key, est_total, int(usage.get("total_tokens", est_total)))
+                    else:
+                        # 429/errors consume no tokens server-side — release
+                        # the reservation so it doesn't poison the window.
+                        pool.settle(api_key, est_total, int(usage["total_tokens"]) if usage.get("total_tokens") else None)
 
                     if response.status_code == 200:
                         res_json = response.json()
@@ -395,6 +431,11 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                         raw = (choice["message"].get("content") or "").strip()
 
                         if choice.get("finish_reason") == "length":
+                            # Same request at temperature=0 truncates
+                            # identically — must raise the budget, not just
+                            # retry (this exact loop caused the
+                            # completion_truncated failures on the first run).
+                            payload["max_tokens"] = min(payload["max_tokens"] + 1024, 4096)
                             retries += 1
                             last_error = "completion_truncated"
                             continue
