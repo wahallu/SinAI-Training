@@ -51,12 +51,10 @@ from tqdm import tqdm
 # One gsk_... key per line, from console.groq.com/keys (each key has its own
 # free-tier budget, so throughput scales roughly linearly with key count).
 GROQ_API_KEYS = [
-    "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",
-    "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",
-    "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",
-    "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",
+    "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",
+    "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",
 ]
-INVOKE_URL    = "https://api.groq.com/openai/v1/chat/completions"
+INVOKE_URL    = "https://integrate.api.nvidia.com/v1/chat/completions"
 DEFAULT_MODEL = "qwen/qwen3.6-27b"
 
 # Groq free-tier limits PER KEY (enforced client-side; server 429s are also
@@ -405,12 +403,19 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                 if api_key is None:
                     last_error = "daily_budget_exhausted"
                     break
+
                 headers = {
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 }
+
                 try:
                     response = requests.post(INVOKE_URL, headers=headers, json=payload, timeout=(10, 180))
+
+                    #Error Printing
+                    print("="*100)
+                    print(response.text[:300])
+                    print("="*100)
 
                     usage = {}
                     if response.headers.get("content-type", "").startswith("application/json"):
@@ -418,12 +423,15 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                             usage = response.json().get("usage", {}) or {}
                         except Exception:
                             usage = {}
+
                     if response.status_code == 200:
                         pool.settle(api_key, est_total, int(usage.get("total_tokens", est_total)))
                     else:
-                        # 429/errors consume no tokens server-side — release
-                        # the reservation so it doesn't poison the window.
-                        pool.settle(api_key, est_total, int(usage["total_tokens"]) if usage.get("total_tokens") else None)
+                        pool.settle(
+                            api_key,
+                            est_total,
+                            int(usage["total_tokens"]) if usage.get("total_tokens") else None
+                        )
 
                     if response.status_code == 200:
                         res_json = response.json()
@@ -431,11 +439,9 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                         raw = (choice["message"].get("content") or "").strip()
 
                         if choice.get("finish_reason") == "length":
-                            # Same request at temperature=0 truncates
-                            # identically — must raise the budget, not just
-                            # retry (this exact loop caused the
-                            # completion_truncated failures on the first run).
-                            payload["max_completion_tokens"] = min(payload["max_completion_tokens"] + 1024, 4096)
+                            payload["max_completion_tokens"] = min(
+                                payload["max_completion_tokens"] + 1024, 4096
+                            )
                             retries += 1
                             last_error = "completion_truncated"
                             continue
@@ -474,8 +480,6 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                             last_error = "all_buckets_rejected"
 
                     elif response.status_code == 429:
-                        # Rest THIS key and retry immediately — pool.acquire
-                        # will hand out a different key if one has capacity.
                         retries += 1
                         retry_after = response.headers.get("retry-after")
                         wait = float(retry_after) if retry_after else 30.0
