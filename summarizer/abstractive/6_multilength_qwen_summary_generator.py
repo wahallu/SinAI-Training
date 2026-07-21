@@ -387,7 +387,7 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                "max_tokens": MAX_COMPLETION_TOKENS,
+                "max_completion_tokens": MAX_COMPLETION_TOKENS,
                 "temperature": 0.0,
                 "top_p": 1.0,
                 "stream": False,
@@ -398,9 +398,9 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
             last_error = ""
 
             while not success and retries < MAX_RETRIES:
-                # Reservation must track the current max_tokens (which grows
+                # Reservation must track the current max_completion_tokens (which grows
                 # on truncated retries).
-                est_total = est_prompt_tokens + payload["max_tokens"]
+                est_total = est_prompt_tokens + payload["max_completion_tokens"]
                 api_key = pool.acquire(est_total)
                 if api_key is None:
                     last_error = "daily_budget_exhausted"
@@ -435,7 +435,7 @@ def worker(pool, input_queue, output_file, lock, pbar, model_name, stats):
                             # identically — must raise the budget, not just
                             # retry (this exact loop caused the
                             # completion_truncated failures on the first run).
-                            payload["max_tokens"] = min(payload["max_tokens"] + 1024, 4096)
+                            payload["max_completion_tokens"] = min(payload["max_completion_tokens"] + 1024, 4096)
                             retries += 1
                             last_error = "completion_truncated"
                             continue
