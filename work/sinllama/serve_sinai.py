@@ -238,9 +238,14 @@ def prompt_headline(text: str, **_) -> str:
     )
 
 
+def summarizer_target_words(text: str) -> int:
+    """Shared with compute_max_tokens() so the generation token budget
+    always matches the summary length the prompt actually asked for."""
+    return max(20, int(len(text.split()) * 0.10))
+
+
 def prompt_summarizer(text: str, **_) -> str:
-    word_count = len(text.split())
-    target     = max(20, int(word_count * 0.10))
+    target = summarizer_target_words(text)
     return (
         "### Instruction:\n"
         "ඔබ සිංහල පුවත් ලිපි සාරාංශ කිරීමේ විශේෂඥයෙකි.\n"
@@ -316,7 +321,7 @@ STOP_SEQUENCES = ["###", "<|eot_id|>", "<|end_of_text|>"]
 # ─────────────────────────────────────────────
 # DYNAMIC TOKEN CAP
 # ─────────────────────────────────────────────
-def compute_max_tokens(task: str, input_token_len: int) -> int:
+def compute_max_tokens(task: str, input_token_len: int, target_words: Optional[int] = None) -> int:
     rules = {
         "grammar"   : lambda n: max(64, int(n * 1.5)),
         "headline"  : lambda n: 60,
@@ -331,8 +336,18 @@ def compute_max_tokens(task: str, input_token_len: int) -> int:
         "style"     : 600,
         "base"      : 512,
     }
-    fn  = rules.get(task, lambda n: 200)
-    cap = fn(input_token_len)
+
+    if task == "summarizer" and target_words is not None:
+        # Budget off the actual word target the prompt asked for, not raw
+        # prompt length — ~2.8 subword tokens per Sinhala word plus headroom
+        # so the model can reach its own stop sequence instead of being
+        # hard-truncated mid-sentence (which also produces stray decode
+        # artifacts when a multi-codepoint grapheme cluster gets split).
+        cap = int(target_words * 2.8) + 24
+    else:
+        fn  = rules.get(task, lambda n: 200)
+        cap = fn(input_token_len)
+
     return min(cap, ceiling.get(task, 400))
 
 
@@ -371,7 +386,12 @@ def generate_response(raw_text: str, task: str, style: Optional[str] = None) -> 
         for seq in STOP_SEQUENCES
     ]
 
-    max_new_tokens    = compute_max_tokens(task, prompt_len)
+    target_words = (
+        summarizer_target_words(raw_text)
+        if task == "summarizer" and "### Instruction:" not in raw_text
+        else None
+    )
+    max_new_tokens    = compute_max_tokens(task, prompt_len, target_words)
     stopping_criteria = StoppingCriteriaList([SequenceStop(stop_token_ids, prompt_len)])
 
     # "base" runs the merged model with every LoRA adapter disabled — the
@@ -724,9 +744,14 @@ async def compare_models(req: CompareRequest):
                 for seq in STOP_SEQUENCES
             ]
             
-            max_new_tokens = compute_max_tokens(req.task, prompt_len)
+            target_words = (
+                summarizer_target_words(req.input_text)
+                if req.task == "summarizer" and "### Instruction:" not in req.input_text
+                else None
+            )
+            max_new_tokens = compute_max_tokens(req.task, prompt_len, target_words)
             stopping_criteria = StoppingCriteriaList([SequenceStop(stop_token_ids, prompt_len)])
-            
+
             adapter_ctx = model.disable_adapter() if adapter_name == "base" else contextlib.nullcontext()
             
             with _generation_lock:
