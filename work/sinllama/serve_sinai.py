@@ -17,6 +17,8 @@ from collections import Counter
 
 import re
 
+from task_registry import TASKS, VALID_STYLES, DEFAULT_STYLE
+
 app = FastAPI()
 
 model_path = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
@@ -34,7 +36,7 @@ def find_latest_adapters() -> dict[str, str]:
         "style"     : "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v07",
         "summarizer": "/home/jovyan/work/sinllama/models/adapters/summarization_sinllama_v04",
     }
-    
+
     target_dir = ADAPTERS_DIR
     if not os.path.exists(target_dir):
         # Fallback to local workspace relative path if server path is missing
@@ -50,13 +52,13 @@ def find_latest_adapters() -> dict[str, str]:
         "style": [],
         "summarizer": []
     }
-    
+
     try:
         for name in os.listdir(target_dir):
             path = os.path.join(target_dir, name)
             if not os.path.isdir(path) or not os.path.isfile(os.path.join(path, "adapter_config.json")):
                 continue
-                
+
             name_lower = name.lower()
             if name_lower.startswith("grammer_") or name_lower.startswith("grammar_"):
                 adapters_by_task["grammar"].append((name, path))
@@ -71,7 +73,7 @@ def find_latest_adapters() -> dict[str, str]:
         return fallback_paths
 
     latest_paths = {}
-    
+
     def get_version(name: str) -> float:
         # Match _v12, _v13, _v04, etc.
         match = re.search(r'_v(\d+)(?:\.(\d+))?', name.lower())
@@ -89,7 +91,7 @@ def find_latest_adapters() -> dict[str, str]:
         else:
             latest_paths[task] = fallback_paths[task]
             print(f"[INFO] No {task} adapters found in directory. Using fallback: {fallback_paths[task]}")
-            
+
     return latest_paths
 
 
@@ -176,125 +178,18 @@ model.eval()
 
 
 # ─────────────────────────────────────────────
-# STYLE DEFINITIONS
-# Each entry is a Sinhala instruction describing
-# exactly how the model should rewrite the article.
-# To add a new style, just add a key here — nothing
-# else in the file needs to change.
+# PROMPT DISPATCH
 # ─────────────────────────────────────────────
-STYLE_INSTRUCTIONS: dict[str, str] = {
-    "formal": (
-        "පහත සිංහල පාඨය නිල හා වෘත්තීය පුවත් ශෛලියට (formal news style) නැවත ලියන්න.\n"
-        "සරල, නිවැරදි සිංහල භාෂාව භාවිත කරන්න. "
-        "ආත්මීය හෝ අනවශ්‍ය සංවාදාත්මක වචන ඉවත් කරන්න."
-    ),
-    "sports": (
-        "පහත සිංහල පාඨය ජීවමාන හා ශක්තිමත් ක්‍රීඩා පුවත් ශෛලියට (sports journalism style) නැවත ලියන්න.\n"
-        "ක්‍රියාශීලී ක්‍රියා පද, ශක්තිමත් ගොනු ශීර්ෂ, හා ක්‍රීඩා ශබ්ද කෝෂය භාවිත කරන්න."
-    ),
-    "youth": (
-        "පහත සිංහල පාඨය තරුණ පාඨකයන් ඉලක්ක කරගත් සරල, ගතිකාරී ශෛලියකට (youth/casual style) නැවත ලියන්න.\n"
-        "සරල වාක්‍ය, කෙළින්ම කතා කරන ලෙස, හා නවීන සිංහල ප්‍රකාශන භාවිත කරන්න. "
-        "ඉතා කාර්යාල ලෙසට ලියූ ශෛලිය ඉවත් කරන්න."
-    ),
-    "editorial": (
-        "පහත සිංහල පාඨය ගැඹුරු විශ්ලේෂණාත්මක සංස්කාරකීය ශෛලියකට (editorial/opinion style) නැවත ලියන්න.\n"
-        "කරුණු ඉදිරිපත් කරමින් විශ්ලේෂණය, ආකල්ප, හා ගැඹුරු සිතුවිලි ඇතුළත් කරන්න. "
-        "ශක්තිමත් හා ඒත්තු ගැන්වෙන ශෛලිය භාවිත කරන්න."
-    ),
-    "feature": (
-        "පහත සිංහල පාඨය කතා කරන ආකාරයේ feature ලිපි ශෛලියකට (feature writing style) නැවත ලියන්න.\n"
-        "දෘශ්‍යමාන භාෂාව, ජීවිත කතා ශෛලිය, හා කාව්‍යාත්මක පාඨ භාවිත කරන්න. "
-        "කරුණු ඉදිරිපත් කිරීම සිත් ඇදගන්නා සුළු වේ."
-    ),
-}
-
-DEFAULT_STYLE = "formal"
-VALID_STYLES  = set(STYLE_INSTRUCTIONS.keys())
-
-
-# ─────────────────────────────────────────────
-# PROMPT TEMPLATES
-# ─────────────────────────────────────────────
-def prompt_grammar(text: str, **_) -> str:
-    return (
-        "### Instruction:\n"
-        "ඔබ සිංහල භාෂා විශේෂඥයෙකි.\n"
-        "පහත සිංහල පාඨයේ ඇති වාකරණ දෝෂ, අක්ෂර වින්‍යාස දෝෂ සහ විරාම ලකුණු දෝෂ නිවැරදි කරන්න.\n"
-        "නිවැරදි කළ පාඨය පමණක් ලියන්න. වෙනත් කිසිදු පැහැදිලි කිරීමක් එකතු නොකරන්න.\n\n"
-        f"Text:\n{text}\n\n"
-        "### Response:\n"
-    )
-
-
-def prompt_headline(text: str, **_) -> str:
-    return (
-        "### Instruction:\n"
-        "ඔබ සිංහල පුවත් සංස්කාරකයෙකි.\n"
-        "පහත සිංහල පුවත් ලිපිය කියවා, ලිපිය සඳහා සංක්ෂිප්ත හා ආකර්ශනීය ශීර්ෂ පාඨයක් (headline) ලියන්න.\n"
-        "ශීර්ෂ පාඨය වචන 10කට නොඉක්මවිය යුතුය.\n\n"
-        f"Article:\n{text}\n\n"
-        "### Response:\n"
-    )
-
-
-def summarizer_target_words(text: str) -> int:
-    """Shared with compute_max_tokens() so the generation token budget
-    always matches the summary length the prompt actually asked for."""
-    return max(20, int(len(text.split()) * 0.10))
-
-
-def prompt_summarizer(text: str, **_) -> str:
-    target = summarizer_target_words(text)
-    return (
-        "### Instruction:\n"
-        "ඔබ සිංහල පුවත් ලිපි සාරාංශ කිරීමේ විශේෂඥයෙකි.\n"
-        "පහත සිංහල පුවත් ලිපිය කියවා, ලිපියේ ප්‍රධාන කරුණු ඇතුළත් සාරාංශයක් ලියන්න.\n"
-        f"සාරාංශය වචන {target}කට සීමා කරන්න.\n\n"
-        f"Article:\n{text}\n\n"
-        "### Response:\n"
-    )
-
-
-def prompt_style(text: str, style: str = DEFAULT_STYLE, **_) -> str:
-    instruction = STYLE_INSTRUCTIONS.get(style, STYLE_INSTRUCTIONS[DEFAULT_STYLE])
-    return (
-        "### Instruction:\n"
-        "ඔබ සිංහල ලේඛන විශේෂඥයෙකි.\n"
-        f"{instruction}\n"
-        "අර්ථය වෙනස් නොකරන්න. ස්වාභාවික සිංහල භාවිත කරන්න.\n\n"
-        f"Text:\n{text}\n\n"
-        "### Response:\n"
-    )
-
-
-def prompt_base(text: str, **_) -> str:
-    """No task adapter — general instruction-following on the merged base model."""
-    return (
-        "### Instruction:\n"
-        f"{text}\n\n"
-        "### Response:\n"
-    )
-
-
-PROMPT_BUILDERS: dict[str, callable] = {
-    "grammar"   : prompt_grammar,
-    "headline"  : prompt_headline,
-    "summarizer": prompt_summarizer,
-    "style"     : prompt_style,
-    "base"      : prompt_base,
-}
-
-
 def build_prompt(task: str, text: str, style: Optional[str] = None) -> str:
     """
     Pass-through if the client already sent a fully-formed prompt.
-    Otherwise wrap raw text in the task template.
+    Otherwise wrap raw text in the task's own template (owned by that
+    task's module under tasks/ — see task_registry.py).
     """
     if "### Instruction:" in text:
         return text
-    builder = PROMPT_BUILDERS.get(task, prompt_grammar)
-    return builder(text, style=style or DEFAULT_STYLE)
+    spec = TASKS.get(task, TASKS["grammar"])
+    return spec.prompt_builder(text, style=style or DEFAULT_STYLE)
 
 
 # ─────────────────────────────────────────────
@@ -318,37 +213,14 @@ class SequenceStop(StoppingCriteria):
 STOP_SEQUENCES = ["###", "<|eot_id|>", "<|end_of_text|>"]
 
 
-# ─────────────────────────────────────────────
-# DYNAMIC TOKEN CAP
-# ─────────────────────────────────────────────
-def compute_max_tokens(task: str, input_token_len: int, target_words: Optional[int] = None) -> int:
-    rules = {
-        "grammar"   : lambda n: max(64, int(n * 1.5)),
-        "headline"  : lambda n: 60,
-        "summarizer": lambda n: max(64, int(n * 0.3)),
-        "style"     : lambda n: max(64, int(n * 1.5)),
-        "base"      : lambda n: 512,
-    }
-    ceiling = {
-        "grammar"   : 600,
-        "headline"  : 60,
-        "summarizer": 300,
-        "style"     : 600,
-        "base"      : 512,
-    }
-
-    if task == "summarizer" and target_words is not None:
-        # Budget off the actual word target the prompt asked for, not raw
-        # prompt length — ~2.8 subword tokens per Sinhala word plus headroom
-        # so the model can reach its own stop sequence instead of being
-        # hard-truncated mid-sentence (which also produces stray decode
-        # artifacts when a multi-codepoint grapheme cluster gets split).
-        cap = int(target_words * 2.8) + 24
-    else:
-        fn  = rules.get(task, lambda n: 200)
-        cap = fn(input_token_len)
-
-    return min(cap, ceiling.get(task, 400))
+def default_decode(tokenizer, outputs, prompt_len: int) -> tuple[str, int]:
+    """Used by any task that doesn't register its own TaskSpec.decode."""
+    new_tokens = outputs[0][prompt_len:]
+    result = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+    for seq in STOP_SEQUENCES:
+        if result.endswith(seq):
+            result = result[:-len(seq)].strip()
+    return result, len(new_tokens)
 
 
 # ─────────────────────────────────────────────
@@ -366,69 +238,69 @@ class PromptRequest(BaseModel):
 # ─────────────────────────────────────────────
 # CORE GENERATE
 # ─────────────────────────────────────────────
-# Guards `set_adapter()` + `model.generate()` as one atomic unit. Today
-# generate_response() runs synchronously inside the async route handler,
-# which already serializes all requests on the event loop — this lock makes
-# that guarantee explicit and keeps it correct if that ever moves onto a
-# threadpool. threading.Lock (not asyncio.Lock) since it must hold across
-# real OS threads either way.
+# Guards `set_adapter()` + `model.generate()` as one atomic unit. Today this
+# runs synchronously inside async route handlers, which already serializes
+# all requests on the event loop — this lock makes that guarantee explicit
+# and keeps it correct if that ever moves onto a threadpool.
+# threading.Lock (not asyncio.Lock) since it must hold across real OS
+# threads either way.
 _generation_lock = threading.Lock()
 
 
-def generate_response(raw_text: str, task: str, style: Optional[str] = None) -> dict:
-    full_prompt = build_prompt(task, raw_text, style)
+def run_generation(task_name: str, raw_text: str, style: Optional[str], active_adapter: str) -> dict:
+    """Shared generation core used by both /generate and /compare.
 
-    inputs     = tokenizer(full_prompt, return_tensors="pt").to("cuda")
-    prompt_len = inputs["input_ids"].shape[1]
+    `task_name` selects which TaskSpec governs prompt format, token budget,
+    repetition_penalty, and decode post-processing — one of the four owned
+    task modules, or "base" for the raw-instruction playground format.
+    `active_adapter` is the literal PEFT adapter to activate via
+    model.set_adapter() — "base" disables all adapters. These are decoupled
+    because /compare can run any task's prompt against the "base" (no
+    adapter) model to measure the fine-tune's lift, or against any
+    discovered adapter version for that task category.
+    """
+    spec = TASKS.get(task_name, TASKS["grammar"])
+
+    full_prompt = build_prompt(task_name, raw_text, style)
+    inputs      = tokenizer(full_prompt, return_tensors="pt").to("cuda")
+    prompt_len  = inputs["input_ids"].shape[1]
 
     stop_token_ids = [
         tokenizer.encode(seq, add_special_tokens=False)
         for seq in STOP_SEQUENCES
     ]
 
-    target_words = (
-        summarizer_target_words(raw_text)
-        if task == "summarizer" and "### Instruction:" not in raw_text
-        else None
-    )
-    max_new_tokens    = compute_max_tokens(task, prompt_len, target_words)
+    max_new_tokens    = spec.max_new_tokens(raw_text, prompt_len)
     stopping_criteria = StoppingCriteriaList([SequenceStop(stop_token_ids, prompt_len)])
 
-    # "base" runs the merged model with every LoRA adapter disabled — the
-    # playground's raw, task-agnostic mode. Every other task activates its
-    # named adapter via set_adapter() as before.
-    adapter_ctx = model.disable_adapter() if task == "base" else contextlib.nullcontext()
+    adapter_ctx = model.disable_adapter() if active_adapter == "base" else contextlib.nullcontext()
 
     with _generation_lock:
-        if task != "base":
-            model.set_adapter(task)
+        if active_adapter != "base":
+            model.set_adapter(active_adapter)
         with adapter_ctx, torch.no_grad():
-            outputs = model.generate(
-                **inputs,
+            gen_kwargs = dict(
                 max_new_tokens     = max_new_tokens,
                 do_sample          = False,
                 temperature        = 1.0,
-                repetition_penalty = 1.3,
+                repetition_penalty = spec.repetition_penalty,
                 eos_token_id       = tokenizer.eos_token_id,
                 pad_token_id       = tokenizer.eos_token_id,
                 stopping_criteria  = stopping_criteria,
                 use_cache          = True,
             )
+            if spec.no_repeat_ngram_size:
+                gen_kwargs["no_repeat_ngram_size"] = spec.no_repeat_ngram_size
+            outputs = model.generate(**inputs, **gen_kwargs)
 
-    new_tokens = outputs[0][prompt_len:]
-    result     = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-
-    for seq in STOP_SEQUENCES:
-        if result.endswith(seq):
-            result = result[:-len(seq)].strip()
+    decode_fn = spec.decode or default_decode
+    result, output_token_count = decode_fn(tokenizer, outputs, prompt_len)
 
     return {
-        "response"      : result if result and len(result) >= 2 else raw_text,
-        "task"          : task,
-        "style"         : style if task == "style" else None,
-        "input_tokens"  : prompt_len,
-        "max_cap_used"  : max_new_tokens,
-        "output_tokens" : len(new_tokens),
+        "text"            : result,
+        "prompt_len"      : prompt_len,
+        "max_new_tokens"  : max_new_tokens,
+        "output_tokens"   : output_token_count,
     }
 
 
@@ -437,7 +309,7 @@ def generate_response(raw_text: str, task: str, style: Optional[str] = None) -> 
 # ─────────────────────────────────────────────
 @app.post("/generate")
 async def generate(req: PromptRequest):
-    if req.task not in PROMPT_BUILDERS:
+    if req.task not in TASKS:
         req.task = "grammar"
 
     if req.task == "style":
@@ -453,7 +325,16 @@ async def generate(req: PromptRequest):
         if not req.style:
             req.style = DEFAULT_STYLE
 
-    return generate_response(req.prompt, req.task, req.style)
+    gen = run_generation(req.task, req.prompt, req.style, active_adapter=req.task)
+
+    return {
+        "response"      : gen["text"] if gen["text"] and len(gen["text"]) >= 2 else req.prompt,
+        "task"          : req.task,
+        "style"         : req.style if req.task == "style" else None,
+        "input_tokens"  : gen["prompt_len"],
+        "max_cap_used"  : gen["max_new_tokens"],
+        "output_tokens" : gen["output_tokens"],
+    }
 
 
 @app.get("/health")
@@ -466,7 +347,7 @@ def list_tasks():
     """Returns supported tasks, available styles, and rendered prompt examples."""
     sample = "කොළඹ කොටස් වෙළෙඳපොළ මිල දර්ශකවල පසුබැස්මක් අද දිනයේ දී වාර්තා විය."
     return {
-        "tasks": list(PROMPT_BUILDERS.keys()),
+        "tasks": list(TASKS.keys()),
         "adapters": {task: os.path.basename(path) for task, path in ADAPTER_PATHS.items()},
         "styles": {
             "available"  : sorted(VALID_STYLES),
@@ -474,12 +355,12 @@ def list_tasks():
             "applies_to" : "style task only",
         },
         "prompt_examples": {
-            "grammar"   : prompt_grammar(sample),
-            "headline"  : prompt_headline(sample),
-            "summarizer": prompt_summarizer(sample),
-            "base"      : prompt_base(sample),
+            "grammar"   : TASKS["grammar"].prompt_builder(sample),
+            "headline"  : TASKS["headline"].prompt_builder(sample),
+            "summarizer": TASKS["summarizer"].prompt_builder(sample),
+            "base"      : TASKS["base"].prompt_builder(sample),
             **{
-                f"style/{s}": prompt_style(sample, style=s)
+                f"style/{s}": TASKS["style"].prompt_builder(sample, style=s)
                 for s in sorted(VALID_STYLES)
             },
         },
@@ -527,7 +408,7 @@ def discover_adapters() -> dict[str, str]:
                 adapters[name] = path
     except Exception as e:
         print(f"Error scanning adapters directory: {e}")
-        
+
     return adapters
 
 
@@ -649,13 +530,13 @@ def over_correction_rate(pred: str, inp: str, ref: str) -> bool:
 def get_adapters():
     """Returns all dynamically discovered adapters grouped by task type."""
     discovered = discover_adapters()
-    
+
     grammar_adapters = []
     headline_adapters = []
     style_adapters = []
     summarizer_adapters = []
     custom_adapters = []
-    
+
     for name in discovered.keys():
         cat = get_adapter_category(name)
         if cat == "grammar":
@@ -668,7 +549,7 @@ def get_adapters():
             summarizer_adapters.append(name)
         else:
             custom_adapters.append(name)
-            
+
     grammar_adapters.sort()
     headline_adapters.sort()
     style_adapters.sort()
@@ -693,7 +574,7 @@ async def compare_models(req: CompareRequest):
     """Runs evaluation inference on all requested adapters and base model."""
     discovered = discover_adapters()
     results = []
-    
+
     for adapter_name in req.adapters:
         # Resolve path
         if adapter_name != "base" and adapter_name not in discovered:
@@ -710,7 +591,7 @@ async def compare_models(req: CompareRequest):
                     "metrics": {}
                 })
                 continue
-                
+
         # Load dynamically if not loaded
         if adapter_name != "base" and adapter_name not in LOADED_ADAPTERS:
             adapter_path = discovered[adapter_name]
@@ -733,63 +614,22 @@ async def compare_models(req: CompareRequest):
                 continue
 
         start_time = time.perf_counter()
-        
-        try:
-            full_prompt = build_prompt(req.task, req.input_text, req.style)
-            inputs = tokenizer(full_prompt, return_tensors="pt").to("cuda")
-            prompt_len = inputs["input_ids"].shape[1]
-            
-            stop_token_ids = [
-                tokenizer.encode(seq, add_special_tokens=False)
-                for seq in STOP_SEQUENCES
-            ]
-            
-            target_words = (
-                summarizer_target_words(req.input_text)
-                if req.task == "summarizer" and "### Instruction:" not in req.input_text
-                else None
-            )
-            max_new_tokens = compute_max_tokens(req.task, prompt_len, target_words)
-            stopping_criteria = StoppingCriteriaList([SequenceStop(stop_token_ids, prompt_len)])
 
-            adapter_ctx = model.disable_adapter() if adapter_name == "base" else contextlib.nullcontext()
-            
-            with _generation_lock:
-                if adapter_name != "base":
-                    model.set_adapter(adapter_name)
-                with adapter_ctx, torch.no_grad():
-                    outputs = model.generate(
-                        **inputs,
-                        max_new_tokens     = max_new_tokens,
-                        do_sample          = False,
-                        temperature        = 1.0,
-                        repetition_penalty = 1.0 if req.task == "grammar" else 1.3,
-                        eos_token_id       = tokenizer.eos_token_id,
-                        pad_token_id       = tokenizer.eos_token_id,
-                        stopping_criteria  = stopping_criteria,
-                        use_cache          = True,
-                    )
-            
-            new_tokens = outputs[0][prompt_len:]
-            decoded = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-            
-            for seq in STOP_SEQUENCES:
-                if decoded.endswith(seq):
-                    decoded = decoded[:-len(seq)].strip()
-                    
-            output_text = decoded if decoded and len(decoded) >= 2 else req.input_text
-            input_tokens = prompt_len
-            output_tokens = len(new_tokens)
-            
+        try:
+            gen = run_generation(req.task, req.input_text, req.style, active_adapter=adapter_name)
+            output_text  = gen["text"] if gen["text"] and len(gen["text"]) >= 2 else req.input_text
+            input_tokens = gen["prompt_len"]
+            output_tokens = gen["output_tokens"]
+
         except Exception as e:
             output_text = f"Inference Error: {str(e)}"
             input_tokens = 0
             output_tokens = 0
-            
+
         latency_sec = time.perf_counter() - start_time
         latency_ms = latency_sec * 1000
         throughput = output_tokens / latency_sec if latency_sec > 0 else 0
-        
+
         metrics = {}
         if req.reference_text and req.reference_text.strip():
             ref = req.reference_text
@@ -798,7 +638,7 @@ async def compare_models(req: CompareRequest):
             gleu = gleu_score(output_text, ref)
             rouge = rouge_scores(output_text, ref)
             over_corr = over_correction_rate(output_text, req.input_text, ref)
-            
+
             metrics = {
                 "token_precision": round(p, 4),
                 "token_recall": round(r, 4),
@@ -811,7 +651,7 @@ async def compare_models(req: CompareRequest):
                 "over_correction": over_corr,
                 "exact_match": output_text.strip() == ref.strip()
             }
-            
+
         results.append({
             "adapter_name": adapter_name,
             "category": get_adapter_category(adapter_name) if adapter_name != "base" else "base",
@@ -822,5 +662,5 @@ async def compare_models(req: CompareRequest):
             "throughput_tokens_per_sec": round(throughput, 2),
             "metrics": metrics
         })
-        
-    return results
+
+    return results
