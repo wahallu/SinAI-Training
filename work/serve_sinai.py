@@ -549,7 +549,7 @@ def discover_adapters() -> dict[str, str]:
 def get_adapter_category(name: str) -> str:
     """Classifies an adapter by its prefix."""
     name_lower = name.lower()
-    if name_lower in ("mt5", "mt5-base", "mt5_base") or name_lower.startswith("mt5"):
+    if "mt5" in name_lower:
         return "mt5"
     elif name_lower in EXTRACTIVE_METHODS or name_lower.startswith("extractive_"):
         return "extractive"
@@ -673,6 +673,7 @@ def get_adapters():
     headline_adapters = []
     style_adapters = []
     summarizer_adapters = []
+    mt5_adapters = []
     custom_adapters = []
 
     for name in discovered.keys():
@@ -685,6 +686,8 @@ def get_adapters():
             style_adapters.append(name)
         elif cat == "summarizer":
             summarizer_adapters.append(name)
+        elif cat == "mt5":
+            mt5_adapters.append(name)
         else:
             custom_adapters.append(name)
 
@@ -692,6 +695,7 @@ def get_adapters():
     headline_adapters.sort()
     style_adapters.sort()
     summarizer_adapters.sort()
+    mt5_adapters = sorted(list(set(mt5_adapters + ["mt5-base"])))
     custom_adapters.sort()
 
     extractive_adapters = ["tfidf", "textrank", "rake", "yake", "keybert"]
@@ -703,7 +707,7 @@ def get_adapters():
             "style": style_adapters,
             "summarizer": summarizer_adapters,
             "extractive": extractive_adapters,
-            "mt5": ["mt5-base"],
+            "mt5": mt5_adapters,
             "custom": custom_adapters
         },
         "loaded_in_gpu": sorted(list(LOADED_ADAPTERS)),
@@ -723,10 +727,7 @@ async def compare_models(req: CompareRequest):
             or adapter_name.lower().replace("extractive_", "") in EXTRACTIVE_METHODS
             or adapter_name.lower().startswith("extractive_")
         )
-        is_mt5 = (
-            adapter_name.lower() in ("mt5", "mt5-base", "mt5_base")
-            or adapter_name.lower().startswith("mt5")
-        )
+        is_mt5 = "mt5" in adapter_name.lower()
 
         if not is_extractive and not is_mt5 and adapter_name != "base" and adapter_name not in discovered:
             discovered = discover_adapters()
