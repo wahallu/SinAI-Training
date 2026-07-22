@@ -8,8 +8,8 @@ Uses Playwright connected to Chrome via CDP (Chrome DevTools Protocol) to bypass
 anti-bot detection on chat.openai.com without needing API keys.
 
 Usage:
-    python abstractive/6_multilength_chatgpt_summary_generator.py
-    python abstractive/6_multilength_chatgpt_summary_generator.py \
+    python summarizer/chatgpt_summarizer.py
+    python summarizer/chatgpt_summarizer.py \
         --input "D:\\SinhalaLLM\\cleaned_datasets\\all_articles_merged.json" \
         --output "D:\\SinhalaLLM\\cleaned_datasets\\6_multilength_summaries.jsonl" \
         --tabs 3
