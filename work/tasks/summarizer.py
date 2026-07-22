@@ -64,6 +64,31 @@ REPETITION_PENALTY = 1.15
 # first few words (e.g. "හිටපු" -> "ිටපු", "ශ්‍රී ලංකා" -> "්‍රී ලංකා").
 
 
+import re
+
+
+def heal_sinhala_text(text: str) -> str:
+    """Heals broken Sinhala subword BPE token splits (e.g. 'ප්‍ර දේශයේ' -> 'ප්‍රදේශයේ')."""
+    if not text:
+        return text
+    # 1. Re-attach Rakaransaya / Hal diacritic prefixes separated by spaces
+    text = re.sub(r'([\u0D80-\u0DFF]+[්‍්]?[ර්‍ර])\s+([\u0D80-\u0DFF]+)', r'\1\2', text)
+
+    # 2. Common Llama-3 Sinhala BPE subword splits
+    splits = [
+        (r'ප්‍ර\s+දේශ', 'ප්‍රදේශ'),
+        (r'පා\s+රිභෝගික', 'පාරිභෝගික'),
+        (r'වී\s+යාජ', 'ව්‍යාජ'),
+        (r'මහේස්ත්‍\s+රාත්', 'මහේස්ත්‍රාත්'),
+        (r'අත්\s+අඩංගුවට', 'අත්අඩංගුවට'),
+    ]
+    for pattern, repl in splits:
+        text = re.sub(pattern, repl, text)
+
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
 def decode(tokenizer, outputs, prompt_len: int) -> tuple[str, int]:
     """Decodes the FULL sequence and splits on the literal assistant-header
     string instead of slicing outputs[0][prompt_len:] — matches
@@ -74,7 +99,7 @@ def decode(tokenizer, outputs, prompt_len: int) -> tuple[str, int]:
     full_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
     if ASSISTANT_HEADER not in full_text:
         result = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-        return result, len(new_tokens)
+        return heal_sinhala_text(result), len(new_tokens)
 
     result = full_text.split(ASSISTANT_HEADER, 1)[1]
     result = result.split("<|eot_id|>")[0]
@@ -83,5 +108,5 @@ def decode(tokenizer, outputs, prompt_len: int) -> tuple[str, int]:
     # drift into unrelated continuation (markdown headers, meta-commentary
     # echoing the prompt, off-topic tangents). Treat its first occurrence as
     # an implicit stop marker rather than passing the derailed tail through.
-    result = result.split("�")[0].strip()
-    return result, len(new_tokens)
+    result = result.split("")[0].strip()
+    return heal_sinhala_text(result), len(new_tokens)
