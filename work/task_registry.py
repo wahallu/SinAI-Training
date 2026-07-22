@@ -82,6 +82,16 @@ TASKS: dict[str, TaskSpec] = {
         prompt_builder=extractive.prompt_extractive,
         max_new_tokens=extractive.max_new_tokens,
     ),
+    "mt5": TaskSpec(
+        name="mt5",
+        prompt_builder=lambda text, **_: f"summarize: {text}",
+        max_new_tokens=lambda raw_text, prompt_len: 180,
+    ),
+    "mt5-base": TaskSpec(
+        name="mt5-base",
+        prompt_builder=lambda text, **_: f"summarize: {text}",
+        max_new_tokens=lambda raw_text, prompt_len: 180,
+    ),
     "base": TaskSpec(
         name="base",
         prompt_builder=base.prompt_base,

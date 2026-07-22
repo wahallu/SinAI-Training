@@ -248,11 +248,84 @@ _generation_lock = threading.Lock()
 
 EXTRACTIVE_METHODS = {"tfidf", "textrank", "rake", "yake", "keybert"}
 
+# ─────────────────────────────────────────────
+# MT5 TEACHER MODEL SUPPORT
+# ─────────────────────────────────────────────
+_MT5_MODEL = None
+_MT5_TOKENIZER = None
+_MT5_LOCK = threading.Lock()
+
+
+def get_mt5_path() -> str:
+    candidates = [
+        "/home/jovyan/summarizer/models/mt5-base",
+        "/home/jovyan/work/summarizer/models/mt5-base",
+        "/home/jovyan/work/sinllama/models/mt5-base",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "../summarizer/models/mt5-base")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "models/mt5-base")),
+        "google/mt5-base",
+    ]
+    for path in candidates:
+        if os.path.exists(path) and (
+            os.path.isfile(os.path.join(path, "config.json"))
+            or os.path.isfile(os.path.join(path, "model.safetensors"))
+            or os.path.isfile(os.path.join(path, "pytorch_model.bin"))
+        ):
+            return path
+    return candidates[0]
+
+
+def run_mt5_generation(raw_text: str) -> dict:
+    global _MT5_MODEL, _MT5_TOKENIZER
+    mt5_path = get_mt5_path()
+
+    with _MT5_LOCK:
+        if _MT5_MODEL is None or _MT5_TOKENIZER is None:
+            print(f"[INFO] Initializing mT5-base teacher model from: {mt5_path}")
+            from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+            _MT5_TOKENIZER = AutoTokenizer.from_pretrained(mt5_path)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            _MT5_MODEL = AutoModelForSeq2SeqLM.from_pretrained(
+                mt5_path,
+                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+            ).to(device)
+            _MT5_MODEL.eval()
+
+    input_text = "summarize: " + raw_text
+    device = next(_MT5_MODEL.parameters()).device
+    inputs = _MT5_TOKENIZER(input_text, return_tensors="pt", truncation=True, max_length=512).to(device)
+
+    with torch.no_grad():
+        outputs = _MT5_MODEL.generate(
+            inputs["input_ids"],
+            max_length=180,
+            num_beams=4,
+            length_penalty=2.0,
+            early_stopping=True,
+        )
+
+    summary = _MT5_TOKENIZER.decode(outputs[0], skip_special_tokens=True).strip()
+    from tasks.summarizer import heal_sinhala_text
+    summary = heal_sinhala_text(summary)
+
+    input_tokens = len(sinhala_tokenize(raw_text))
+    output_tokens = len(sinhala_tokenize(summary))
+
+    return {
+        "text": summary if summary and len(summary) >= 2 else raw_text,
+        "prompt_len": input_tokens,
+        "max_new_tokens": 180,
+        "output_tokens": output_tokens,
+    }
+
 
 def run_generation(task_name: str, raw_text: str, style: Optional[str], active_adapter: str) -> dict:
     """Shared generation core used by both /generate and /compare."""
     adapter_clean = active_adapter.lower().replace("extractive_", "")
     task_clean = task_name.lower().replace("extractive_", "")
+
+    if adapter_clean in ("mt5", "mt5-base", "mt5_base") or task_clean in ("mt5", "mt5-base", "mt5_base"):
+        return run_mt5_generation(raw_text)
 
     if adapter_clean in EXTRACTIVE_METHODS or task_clean in EXTRACTIVE_METHODS or task_name == "extractive":
         method = adapter_clean if adapter_clean in EXTRACTIVE_METHODS else task_clean
@@ -425,7 +498,9 @@ def discover_adapters() -> dict[str, str]:
 def get_adapter_category(name: str) -> str:
     """Classifies an adapter by its prefix."""
     name_lower = name.lower()
-    if name_lower in EXTRACTIVE_METHODS or name_lower.startswith("extractive_"):
+    if name_lower in ("mt5", "mt5-base", "mt5_base") or name_lower.startswith("mt5"):
+        return "mt5"
+    elif name_lower in EXTRACTIVE_METHODS or name_lower.startswith("extractive_"):
         return "extractive"
     elif name_lower.startswith("grammer_") or name_lower.startswith("grammar_"):
         return "grammar"
@@ -577,6 +652,7 @@ def get_adapters():
             "style": style_adapters,
             "summarizer": summarizer_adapters,
             "extractive": extractive_adapters,
+            "mt5": ["mt5-base"],
             "custom": custom_adapters
         },
         "loaded_in_gpu": sorted(list(LOADED_ADAPTERS)),
@@ -586,7 +662,7 @@ def get_adapters():
 
 @app.post("/compare")
 async def compare_models(req: CompareRequest):
-    """Runs evaluation inference on all requested adapters, base model, and extractive methods."""
+    """Runs evaluation inference on all requested adapters, base model, extractive methods, and mT5."""
     discovered = discover_adapters()
     results = []
 
@@ -596,8 +672,12 @@ async def compare_models(req: CompareRequest):
             or adapter_name.lower().replace("extractive_", "") in EXTRACTIVE_METHODS
             or adapter_name.lower().startswith("extractive_")
         )
+        is_mt5 = (
+            adapter_name.lower() in ("mt5", "mt5-base", "mt5_base")
+            or adapter_name.lower().startswith("mt5")
+        )
 
-        if not is_extractive and adapter_name != "base" and adapter_name not in discovered:
+        if not is_extractive and not is_mt5 and adapter_name != "base" and adapter_name not in discovered:
             discovered = discover_adapters()
             if adapter_name not in discovered:
                 results.append({
@@ -613,7 +693,7 @@ async def compare_models(req: CompareRequest):
                 continue
 
         # Load dynamically if PEFT adapter and not loaded
-        if not is_extractive and adapter_name != "base" and adapter_name not in LOADED_ADAPTERS:
+        if not is_extractive and not is_mt5 and adapter_name != "base" and adapter_name not in LOADED_ADAPTERS:
             adapter_path = discovered[adapter_name]
             print(f"[INFO] Loading adapter on-the-fly: {adapter_name}")
             try:
@@ -632,6 +712,7 @@ async def compare_models(req: CompareRequest):
                     "metrics": {}
                 })
                 continue
+
 
         start_time = time.perf_counter()
 
