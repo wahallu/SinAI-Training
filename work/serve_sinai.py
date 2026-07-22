@@ -275,28 +275,52 @@ def get_mt5_path() -> str:
     return candidates[0]
 
 
-def run_mt5_generation(raw_text: str) -> dict:
-    global _MT5_MODEL, _MT5_TOKENIZER
+_MT5_BASE_MODEL = None
+_MT5_TOKENIZER = None
+_MT5_LOADED_ADAPTERS = {}
+_MT5_LOCK = threading.Lock()
+
+
+def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
+    global _MT5_BASE_MODEL, _MT5_TOKENIZER, _MT5_LOADED_ADAPTERS
     mt5_path = get_mt5_path()
 
     with _MT5_LOCK:
-        if _MT5_MODEL is None or _MT5_TOKENIZER is None:
-            print(f"[INFO] Initializing mT5-base teacher model from: {mt5_path}")
+        if _MT5_BASE_MODEL is None or _MT5_TOKENIZER is None:
+            print(f"[INFO] Initializing raw mT5-base model from: {mt5_path}")
             from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
             _MT5_TOKENIZER = AutoTokenizer.from_pretrained(mt5_path)
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            _MT5_MODEL = AutoModelForSeq2SeqLM.from_pretrained(
+            _MT5_BASE_MODEL = AutoModelForSeq2SeqLM.from_pretrained(
                 mt5_path,
                 torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
             ).to(device)
-            _MT5_MODEL.eval()
+            _MT5_BASE_MODEL.eval()
+
+        target_model = _MT5_BASE_MODEL
+        discovered = discover_adapters()
+
+        if active_adapter.lower() not in ("mt5", "mt5-base", "mt5_base") and active_adapter in discovered:
+            adapter_path = discovered[active_adapter]
+            if active_adapter not in _MT5_LOADED_ADAPTERS:
+                print(f"[INFO] Loading PEFT LoRA adapter for mT5: {active_adapter} from {adapter_path}")
+                try:
+                    from peft import PeftModel
+                    peft_mt5 = PeftModel.from_pretrained(_MT5_BASE_MODEL, adapter_path, adapter_name=active_adapter)
+                    peft_mt5.eval()
+                    _MT5_LOADED_ADAPTERS[active_adapter] = peft_mt5
+                except Exception as exc:
+                    print(f"[ERROR] Failed loading PEFT LoRA for mT5 ({active_adapter}): {exc}")
+
+            if active_adapter in _MT5_LOADED_ADAPTERS:
+                target_model = _MT5_LOADED_ADAPTERS[active_adapter]
 
     input_text = "summarize: " + raw_text
-    device = next(_MT5_MODEL.parameters()).device
+    device = next(target_model.parameters()).device
     inputs = _MT5_TOKENIZER(input_text, return_tensors="pt", truncation=True, max_length=512).to(device)
 
     with torch.no_grad():
-        outputs = _MT5_MODEL.generate(
+        outputs = target_model.generate(
             inputs["input_ids"],
             max_length=180,
             num_beams=4,
@@ -324,8 +348,8 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
     adapter_clean = active_adapter.lower().replace("extractive_", "")
     task_clean = task_name.lower().replace("extractive_", "")
 
-    if adapter_clean in ("mt5", "mt5-base", "mt5_base") or task_clean in ("mt5", "mt5-base", "mt5_base"):
-        return run_mt5_generation(raw_text)
+    if adapter_clean.startswith("mt5") or adapter_clean.startswith("summarization_mt5") or task_clean.startswith("mt5"):
+        return run_mt5_generation(raw_text, active_adapter=active_adapter)
 
     if adapter_clean in EXTRACTIVE_METHODS or task_clean in EXTRACTIVE_METHODS or task_name == "extractive":
         method = adapter_clean if adapter_clean in EXTRACTIVE_METHODS else task_clean
