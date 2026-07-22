@@ -71,8 +71,8 @@ def heal_sinhala_text(text: str) -> str:
     """Heals broken Sinhala subword BPE token splits (e.g. 'ප්‍ර දේශයේ' -> 'ප්‍රදේශයේ')."""
     if not text:
         return text
-    # 1. Re-attach Rakaransaya / Hal diacritic prefixes separated by spaces
-    text = re.sub(r'([\u0D80-\u0DFF]+[්‍්]?[ර්‍ර])\s+([\u0D80-\u0DFF]+)', r'\1\2', text)
+    # 1. Re-attach single-consonant Rakaransaya diacritic prefixes (e.g. 'ප්‍ර ', 'ක්‍ර ') separated by spaces
+    text = re.sub(r'\b([\u0D80-\u0DFF][්‍්]?[ර්‍ර])\s+([\u0D80-\u0DFF]+)', r'\1\2', text)
 
     # 2. Common Llama-3 Sinhala BPE subword splits
     splits = [
@@ -108,5 +108,5 @@ def decode(tokenizer, outputs, prompt_len: int) -> tuple[str, int]:
     # drift into unrelated continuation (markdown headers, meta-commentary
     # echoing the prompt, off-topic tangents). Treat its first occurrence as
     # an implicit stop marker rather than passing the derailed tail through.
-    result = result.split("")[0].strip()
+    result = result.split("\ufffd")[0].strip()
     return heal_sinhala_text(result), len(new_tokens)
