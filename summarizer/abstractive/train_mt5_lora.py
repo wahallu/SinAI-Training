@@ -21,6 +21,34 @@ import os
 import random
 from pathlib import Path
 
+# Bypass incompatible torchao 0.8.0 check inside peft across all modules
+try:
+    import peft
+    import peft.import_utils
+    peft.import_utils.is_torchao_available = lambda *a, **k: False
+
+    if hasattr(peft.import_utils, "check_min_version"):
+        _orig_check = peft.import_utils.check_min_version
+        def _safe_check(pkg, ver, *a, **k):
+            if "torchao" in str(pkg).lower():
+                return False
+            try:
+                return _orig_check(pkg, ver, *a, **k)
+            except Exception:
+                return False
+        peft.import_utils.check_min_version = _safe_check
+
+    import peft.tuners.lora.torchao
+    peft.tuners.lora.torchao.is_torchao_available = lambda *a, **k: False
+except Exception:
+    pass
+
+try:
+    import peft.tuners.lora.model
+    peft.tuners.lora.model.is_torchao_available = lambda *a, **k: False
+except Exception:
+    pass
+
 import numpy as np
 import torch
 from datasets import Dataset, DatasetDict
