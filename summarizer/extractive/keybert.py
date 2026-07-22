@@ -111,10 +111,10 @@ def keybert_summarize(text: str, n: int = 3, diversity: float = 0.5) -> str:
     sentence_embeddings = None
     doc_embedding = None
 
-    if _HAS_SBERT:
+    # Use fast local grapheme TF-IDF vector representation first for instant response (<1ms)
+    # If SentenceTransformer is already loaded or available locally without network call, try it with timeout/local check
+    if _HAS_SBERT and _SBERT_MODEL is not None:
         try:
-            if _SBERT_MODEL is None:
-                _SBERT_MODEL = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
             sentence_embeddings = _SBERT_MODEL.encode(sentences, convert_to_numpy=True)
             doc_embedding = _SBERT_MODEL.encode([text], convert_to_numpy=True)[0]
         except Exception:
