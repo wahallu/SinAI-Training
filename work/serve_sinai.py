@@ -246,19 +246,29 @@ class PromptRequest(BaseModel):
 # threads either way.
 _generation_lock = threading.Lock()
 
+EXTRACTIVE_METHODS = {"tfidf", "textrank", "rake", "yake", "keybert"}
+
 
 def run_generation(task_name: str, raw_text: str, style: Optional[str], active_adapter: str) -> dict:
-    """Shared generation core used by both /generate and /compare.
+    """Shared generation core used by both /generate and /compare."""
+    adapter_clean = active_adapter.lower().replace("extractive_", "")
+    task_clean = task_name.lower().replace("extractive_", "")
 
-    `task_name` selects which TaskSpec governs prompt format, token budget,
-    repetition_penalty, and decode post-processing — one of the four owned
-    task modules, or "base" for the raw-instruction playground format.
-    `active_adapter` is the literal PEFT adapter to activate via
-    model.set_adapter() — "base" disables all adapters. These are decoupled
-    because /compare can run any task's prompt against the "base" (no
-    adapter) model to measure the fine-tune's lift, or against any
-    discovered adapter version for that task category.
-    """
+    if adapter_clean in EXTRACTIVE_METHODS or task_clean in EXTRACTIVE_METHODS or task_name == "extractive":
+        method = adapter_clean if adapter_clean in EXTRACTIVE_METHODS else task_clean
+        if method not in EXTRACTIVE_METHODS:
+            method = "textrank"
+        from tasks.extractive import run_extractive
+        result_text = run_extractive(method, raw_text, n=3)
+        input_tokens = len(sinhala_tokenize(raw_text))
+        output_tokens = len(sinhala_tokenize(result_text))
+        return {
+            "text": result_text,
+            "prompt_len": input_tokens,
+            "max_new_tokens": 180,
+            "output_tokens": output_tokens,
+        }
+
     spec = TASKS.get(task_name, TASKS["grammar"])
 
     full_prompt = build_prompt(task_name, raw_text, style)
@@ -415,7 +425,9 @@ def discover_adapters() -> dict[str, str]:
 def get_adapter_category(name: str) -> str:
     """Classifies an adapter by its prefix."""
     name_lower = name.lower()
-    if name_lower.startswith("grammer_") or name_lower.startswith("grammar_"):
+    if name_lower in EXTRACTIVE_METHODS or name_lower.startswith("extractive_"):
+        return "extractive"
+    elif name_lower.startswith("grammer_") or name_lower.startswith("grammar_"):
         return "grammar"
     elif name_lower.startswith("headline_"):
         return "headline"
@@ -556,12 +568,15 @@ def get_adapters():
     summarizer_adapters.sort()
     custom_adapters.sort()
 
+    extractive_adapters = ["tfidf", "textrank", "rake", "yake", "keybert"]
+
     return {
         "adapters": {
             "grammar": grammar_adapters,
             "headline": headline_adapters,
             "style": style_adapters,
             "summarizer": summarizer_adapters,
+            "extractive": extractive_adapters,
             "custom": custom_adapters
         },
         "loaded_in_gpu": sorted(list(LOADED_ADAPTERS)),
@@ -571,13 +586,18 @@ def get_adapters():
 
 @app.post("/compare")
 async def compare_models(req: CompareRequest):
-    """Runs evaluation inference on all requested adapters and base model."""
+    """Runs evaluation inference on all requested adapters, base model, and extractive methods."""
     discovered = discover_adapters()
     results = []
 
     for adapter_name in req.adapters:
-        # Resolve path
-        if adapter_name != "base" and adapter_name not in discovered:
+        is_extractive = (
+            adapter_name.lower() in EXTRACTIVE_METHODS
+            or adapter_name.lower().replace("extractive_", "") in EXTRACTIVE_METHODS
+            or adapter_name.lower().startswith("extractive_")
+        )
+
+        if not is_extractive and adapter_name != "base" and adapter_name not in discovered:
             discovered = discover_adapters()
             if adapter_name not in discovered:
                 results.append({
@@ -592,8 +612,8 @@ async def compare_models(req: CompareRequest):
                 })
                 continue
 
-        # Load dynamically if not loaded
-        if adapter_name != "base" and adapter_name not in LOADED_ADAPTERS:
+        # Load dynamically if PEFT adapter and not loaded
+        if not is_extractive and adapter_name != "base" and adapter_name not in LOADED_ADAPTERS:
             adapter_path = discovered[adapter_name]
             print(f"[INFO] Loading adapter on-the-fly: {adapter_name}")
             try:
@@ -664,3 +684,4 @@ async def compare_models(req: CompareRequest):
         })
 
     return results
+

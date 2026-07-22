@@ -12,7 +12,7 @@ another's.
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from tasks import base, grammar, headline, style, summarizer
+from tasks import base, extractive, grammar, headline, style, summarizer
 
 
 @dataclass
@@ -50,6 +50,37 @@ TASKS: dict[str, TaskSpec] = {
         max_new_tokens=summarizer.max_new_tokens,
         repetition_penalty=summarizer.REPETITION_PENALTY,
         decode=summarizer.decode,
+    ),
+    "extractive": TaskSpec(
+        name="extractive",
+        prompt_builder=extractive.prompt_extractive,
+        max_new_tokens=extractive.max_new_tokens,
+        repetition_penalty=extractive.REPETITION_PENALTY,
+    ),
+    "tfidf": TaskSpec(
+        name="tfidf",
+        prompt_builder=extractive.prompt_extractive,
+        max_new_tokens=extractive.max_new_tokens,
+    ),
+    "textrank": TaskSpec(
+        name="textrank",
+        prompt_builder=extractive.prompt_extractive,
+        max_new_tokens=extractive.max_new_tokens,
+    ),
+    "rake": TaskSpec(
+        name="rake",
+        prompt_builder=extractive.prompt_extractive,
+        max_new_tokens=extractive.max_new_tokens,
+    ),
+    "yake": TaskSpec(
+        name="yake",
+        prompt_builder=extractive.prompt_extractive,
+        max_new_tokens=extractive.max_new_tokens,
+    ),
+    "keybert": TaskSpec(
+        name="keybert",
+        prompt_builder=extractive.prompt_extractive,
+        max_new_tokens=extractive.max_new_tokens,
     ),
     "base": TaskSpec(
         name="base",
