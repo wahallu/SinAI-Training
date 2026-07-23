@@ -326,8 +326,9 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
 
         target_model = _MT5_BASE_MODEL
         discovered = discover_adapters()
+        is_base_request = active_adapter.lower() in ("mt5", "mt5-base", "mt5_base")
 
-        if active_adapter.lower() not in ("mt5", "mt5-base", "mt5_base") and active_adapter in discovered:
+        if not is_base_request and active_adapter in discovered:
             adapter_path = discovered[active_adapter]
             if active_adapter not in _MT5_LOADED_ADAPTERS:
                 print(f"[INFO] Loading PEFT LoRA adapter for mT5: {active_adapter} from {adapter_path}")
@@ -342,13 +343,23 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
             if active_adapter in _MT5_LOADED_ADAPTERS:
                 target_model = _MT5_LOADED_ADAPTERS[active_adapter]
 
+        if is_base_request and _MT5_LOADED_ADAPTERS:
+            target_model = list(_MT5_LOADED_ADAPTERS.values())[0]
+
+        adapter_ctx = (
+            target_model.disable_adapter()
+            if (is_base_request and hasattr(target_model, "disable_adapter"))
+            else contextlib.nullcontext()
+        )
+
     input_text = "summarize: " + raw_text
     device = next(target_model.parameters()).device
     inputs = _MT5_TOKENIZER(input_text, return_tensors="pt", truncation=True, max_length=512).to(device)
 
-    with torch.no_grad():
+    with torch.no_grad(), adapter_ctx:
         outputs = target_model.generate(
-            inputs["input_ids"],
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs.get("attention_mask"),
             max_length=180,
             num_beams=4,
             length_penalty=2.0,
