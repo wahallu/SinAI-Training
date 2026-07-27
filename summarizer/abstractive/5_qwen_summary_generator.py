@@ -217,7 +217,7 @@ def worker(limiter: KeyRateLimiter, input_queue: Queue, output_file: Path,
 
                         if truncated:
                             payload["max_tokens"] = min(payload["max_tokens"] + 512, 2048)
-                            print(f"\n[Truncated] retrying with max_tokens={payload['max_tokens']}: {record.get('url')}")
+                            # print(f"\n[Truncated] retrying with max_tokens={payload['max_tokens']}: {record.get('url')}")
                             retries += 1
                             continue
 
@@ -237,32 +237,32 @@ def worker(limiter: KeyRateLimiter, input_queue: Queue, output_file: Path,
                         retries += 1
                         limiter.cooldown(api_key, 60)
                         last_error = "429 rate limit"
-                        print(f"\n[RateLimit] key ...{api_key[-6:]} cooling down 60s (retry {retries}/{MAX_RETRIES})")
+                        # print(f"\n[RateLimit] key ...{api_key[-6:]} cooling down 60s (retry {retries}/{MAX_RETRIES})")
 
                     elif response.status_code == 400 and "DEGRADED" in response.text:
                         # Model function is degraded/unavailable; back off and retry.
                         retries += 1
                         wait = min(120, 20 * retries)
                         last_error = "DEGRADED function"
-                        print(f"\n[DEGRADED] model unavailable, waiting {wait}s (retry {retries}/{MAX_RETRIES})")
+                        # print(f"\n[DEGRADED] model unavailable, waiting {wait}s (retry {retries}/{MAX_RETRIES})")
                         time.sleep(wait)
 
                     else:
                         retries += 1
                         last_error = f"{response.status_code}: {response.text[:200]}"
-                        print(f"\n[Error {response.status_code}] {response.text[:300]}")
+                        # print(f"\n[Error {response.status_code}] {response.text[:300]}")
                         time.sleep(min(60, (2 ** retries) + 2))
 
                 except requests.exceptions.Timeout as e:
                     retries += 1
                     last_error = f"timeout: {repr(e)}"
-                    print(f"\n[Timeout] {repr(e)} (retry {retries}/{MAX_RETRIES})")
+                    # print(f"\n[Timeout] {repr(e)} (retry {retries}/{MAX_RETRIES})")
                     time.sleep(min(30, 5 * retries) + random.uniform(0, 2))
 
                 except Exception as e:
                     retries += 1
                     last_error = repr(e)
-                    print(f"\n[Exception] {repr(e)} (retry {retries}/{MAX_RETRIES})")
+                    # print(f"\n[Exception] {repr(e)} (retry {retries}/{MAX_RETRIES})")
                     time.sleep(min(60, 5 * retries))
 
             if not success:

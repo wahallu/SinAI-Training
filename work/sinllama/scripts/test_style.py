@@ -487,22 +487,34 @@ def rewrite_in_style(article: str, style_instruction: str) -> str:
     input_word_count = len(article.split())
     max_new_tokens = min(max(384, int(input_word_count * 3.5)), 2048)
 
+    # ⚠️ REVERTED: beam search (num_beams>1) fails under Unsloth's fast
+    # inference path with "AttributeError: 'tuple' object has no
+    # attribute 'reorder_cache'". Known Unsloth limitation - their
+    # generate() patch uses a legacy tuple-based KV cache that doesn't
+    # implement the cache reordering beam search needs.
+    NUM_BEAMS = 1
+
+    # ✅ FIXED: removed no_repeat_ngram_size and repetition_penalty.
+    # These were CAUSING the syllable-dropping corruption, not
+    # preventing it. Sinhala is agglutinative - the same subword token
+    # sequences legitimately recur constantly within one article (case
+    # endings like -යුතු/-වන/-ගිය, honorifics, common stems).
+    # no_repeat_ngram_size=3 is a HARD BAN: once a 3-token sequence has
+    # appeared, the model is forbidden from producing it again - so the
+    # second time it needs to write e.g. "කටයුතු" it CANNOT, and is
+    # forced to emit a corrupted near-miss like "කටතු". That's exactly
+    # the observed failure (කටයුතු->කටතු, පසුගිය->පසුගදා,
+    # මුහුණ දෙන->මුණෙන). repetition_penalty pushes the same wrong way.
+    # Both are designed for English, where a repeated 3-gram usually
+    # signals degenerate looping; in a morphologically rich language
+    # with subword tokenization they actively break correct spelling.
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
             max_new_tokens      = max_new_tokens,
-            # ✅ CHANGED: sampling (do_sample=True) introduces randomness
-            # that pulls generation away from the model's single most-
-            # confident continuation. For EVAL specifically (not
-            # production), greedy decoding is more reproducible and tends
-            # to overlap more with a single reference on exact-match
-            # metrics like BLEU/ROUGE, since it always picks the highest-
-            # probability token rather than sampling among plausible ones.
-            # This is a standard, honest decoding choice for evaluation -
-            # not a metric-gaming trick.
             do_sample           = False,
-            repetition_penalty  = 1.15,
-            no_repeat_ngram_size = 3,
+            num_beams           = NUM_BEAMS,
+            repetition_penalty  = 1.0,   # 1.0 = disabled
             eos_token_id         = tokenizer.eos_token_id,
             pad_token_id         = tokenizer.eos_token_id,
             use_cache            = True,

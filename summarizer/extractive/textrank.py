@@ -147,6 +147,10 @@ def textrank_summarize(text: str, n: int = 3) -> str:
     return " ".join(sentences[i] for i in top_indices)
 
 
+def summarize(text: str, n: int = 3) -> str:
+    return textrank_summarize(text, n=n)
+
+
 # ─────────────────────────────────────────────
 # ROUGE (grapheme-cluster, no external library)
 # ─────────────────────────────────────────────

@@ -20,7 +20,7 @@ from transformers import (
 # ──────────────────────────────────────────────
 SINLLAMA_BASE   = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
 # ✅ UPDATED: v08 → v09, trained on the new, much larger dataset below
-OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v09"
+OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v10"
 
 # ✅ UPDATED: points at the new dataset (~22,237 articles - up from ~2,173
 # for v08). NOTE: confirm this exact filename/path matches what you
@@ -33,14 +33,15 @@ TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_dub.jsonl"
 # ──────────────────────────────────────────────
 # ✅ INCREASED: 2048 → 4096 (Sinhala needs more tokens)
 MAX_SEQ_LENGTH    = 4096
-# ✅ REDUCED: 32 → 16. The v08 run showed a large train/eval loss gap
-# (train_loss=0.4764, eval_loss=1.087 - more than 2x) indicating
-# overfitting. More trainable capacity gives the model more room to
-# memorize repeated style boilerplate instead of learning the underlying
-# transformation. With ~22,237 articles now (up from ~2,173), less
-# capacity per example is needed anyway.
-LORA_RANK         = 16
-LORA_ALPHA        = 32          # halved alongside rank to keep the alpha/rank ratio
+# ✅ RAISED: 16 → 24. Rank was cut 32→16 to fix v08's overfitting, and
+# that worked (train/eval gap went 2.28x → 1.26x, eval_loss 1.087 →
+# 0.849). But character/morphology corruption persisted through that
+# fix, suggesting 16 may have OVERcorrected and now limits fluency
+# capacity. 24 is a middle ground: more capacity for clean Sinhala
+# morphology, while weight_decay + 3 epochs + the much larger dataset
+# still guard against the overfitting that rank 32 had.
+LORA_RANK         = 24
+LORA_ALPHA        = 48          # kept at 2x rank, same ratio as before
 LORA_DROPOUT       = 0.05
 # ✅ REDUCED: 5 → 3. Same overfitting evidence as above - with ~10x more
 # articles than the v08 run, fewer passes are needed, and the v08
@@ -74,6 +75,14 @@ DROP_QC_ISSUES = {
     "missing_required_closing",
     "possible_stutter_duplication",
     "suspiciously_short",
+    # ✅ NEW: added after manually reviewing v09 outputs found a
+    # misgendered real person, an English word inserted into a direct
+    # quote, and a fabricated duration - see generate_style_dataset.py's
+    # check_quality() for the detection logic.
+    "honorific_gender_mismatch",
+    "foreign_symbol_added",
+    "wrong_style_marker_present",
+    "possible_numeric_hallucination",
 }
 
 # Style IDs - MUST stay byte-for-byte identical to the keys used in
@@ -148,7 +157,20 @@ def format_prompt(instruction: str, article: str, rewritten: str) -> str:
         # which breaks exact n-gram overlap even when the fact itself
         # is preserved. This makes that constraint explicit.
         "7. Keep all names, numbers, and dates in EXACTLY their original "
-        "wording - only change sentence structure and tone around them\n\n"
+        "wording - only change sentence structure and tone around them\n"
+        # ✅ NEW: manual review of v09 outputs found the model flipping
+        # a real female minister's honorific (මහත්මිය -> මහතා) in 3 of 5
+        # styles, altering text inside direct quotes, and inventing a
+        # duration that appeared nowhere in the source. Decoding params
+        # can't cause those - they're learned from training data, so the
+        # constraints have to be in the training prompt itself.
+        "8. Preserve gender-marked honorifics EXACTLY (මහත්මිය stays "
+        "මහත්මිය, මහතා stays මහතා) - never change a person's honorific "
+        "or implied gender\n"
+        "9. Text inside quotation marks must be copied VERBATIM from the "
+        "original - never reword, translate, or insert words into a quote\n"
+        "10. Never introduce symbols, numbers, durations, or dates that "
+        "do not appear in the source article\n\n"
         "### Input:\n"
         f"{article}\n\n"
         "### Response:\n"
