@@ -25,6 +25,21 @@ model_path = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
 ADAPTERS_DIR = "/home/jovyan/work/sinllama/models/adapters"
 
 
+def get_adapter_version(name: str) -> float:
+    """Extracts a comparable version number from an adapter folder name
+    (e.g. "summarization_sinllama_v06" -> 6.0, "grammar_sinllama_v13" ->
+    13.0). Shared by find_latest_adapters() (picks the highest version per
+    task at startup) and the summarizer length-conditioning default in
+    run_generation() below (picks a prompt format based on the specific
+    version actually in use for a given request)."""
+    match = re.search(r'_v(\d+)(?:\.(\d+))?', name.lower())
+    if match:
+        major = int(match.group(1))
+        minor = int(match.group(2)) if match.group(2) else 0
+        return major + minor * 0.01
+    return 0.0
+
+
 def find_latest_adapters() -> dict[str, str]:
     """
     Scans ADAPTERS_DIR and returns a dictionary of the latest adapter paths for each task.
@@ -74,18 +89,9 @@ def find_latest_adapters() -> dict[str, str]:
 
     latest_paths = {}
 
-    def get_version(name: str) -> float:
-        # Match _v12, _v13, _v04, etc.
-        match = re.search(r'_v(\d+)(?:\.(\d+))?', name.lower())
-        if match:
-            major = int(match.group(1))
-            minor = int(match.group(2)) if match.group(2) else 0
-            return major + minor * 0.01
-        return 0.0
-
     for task, items in adapters_by_task.items():
         if items:
-            items.sort(key=lambda x: get_version(x[0]), reverse=True)
+            items.sort(key=lambda x: get_adapter_version(x[0]), reverse=True)
             latest_paths[task] = items[0][1]
             print(f"[INFO] Automatically selected latest {task} adapter: {items[0][0]}")
         else:
@@ -265,9 +271,11 @@ class PromptRequest(BaseModel):
     # Options: formal | sports | youth | editorial | feature
     # Defaults to "formal" if omitted.
     style  : Optional[str] = None
-    # Only used when task == "summarizer" and the resolved adapter is v06+.
-    # Options: short | medium | long. Omit (or None) to get the legacy
-    # v02-v05 fixed-instruction prompt — see work/tasks/summarizer.py.
+    # Only used when task == "summarizer". Options: short | medium | long.
+    # If omitted, run_generation() auto-defaults to "medium" when the
+    # resolved adapter is v06+ (which requires a length line — see
+    # SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION below), or falls back to
+    # the legacy v02-v05 fixed-instruction prompt otherwise.
     length : Optional[str] = None
 
 
@@ -283,6 +291,30 @@ class PromptRequest(BaseModel):
 _generation_lock = threading.Lock()
 
 EXTRACTIVE_METHODS = {"tfidf", "textrank", "rake", "yake", "keybert"}
+
+# v06 was the first summarizer adapter trained with length-conditioning
+# baked into every training example (see
+# summarizer/abstractive/6_train_summarizer.py) — there is no "bare"
+# prompt mode in its training data. Update this threshold if a future
+# summarizer version changes the prompt format again.
+SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION = 6.0
+
+
+def _summarizer_adapter_folder_name(active_adapter: str) -> str:
+    """Resolves the actual adapter folder name in use for a summarizer
+    request, so its version can be checked against
+    SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION.
+
+    /generate always passes the generic PEFT adapter name "summarizer"
+    (registered at startup as an alias for whatever find_latest_adapters()
+    resolved) — look the real folder name up via ADAPTER_PATHS. /compare
+    passes the specific folder name directly (e.g.
+    "summarization_sinllama_v06"), since it can load any adapter on the fly
+    by name — use it as-is."""
+    if active_adapter == "summarizer":
+        return os.path.basename(ADAPTER_PATHS.get("summarizer", ""))
+    return active_adapter
+
 
 # ─────────────────────────────────────────────
 # MT5 TEACHER MODEL SUPPORT
@@ -420,7 +452,20 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
 
     spec = TASKS.get(task_name, TASKS["grammar"])
 
-    full_prompt = build_prompt(task_name, raw_text, style, length)
+    # For the summarizer task, if the caller didn't specify a length, infer
+    # one from the actual adapter being used: v06+ has no "bare" prompt mode
+    # in its training data (see SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION
+    # above), so leaving length unset would send it the legacy v02-v05
+    # instruction it never saw. v02-v05 have no such requirement and keep
+    # the old behavior unchanged (length=None -> legacy fixed-instruction
+    # line, via tasks/summarizer.py's default).
+    effective_length = length
+    if task_name == "summarizer" and effective_length is None:
+        folder_name = _summarizer_adapter_folder_name(active_adapter)
+        if get_adapter_version(folder_name) >= SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION:
+            effective_length = "medium"
+
+    full_prompt = build_prompt(task_name, raw_text, style, effective_length)
     inputs      = tokenizer(full_prompt, return_tensors="pt").to("cuda")
     prompt_len  = inputs["input_ids"].shape[1]
 
@@ -433,7 +478,7 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
     # other task's max_new_tokens has a fixed (raw_text, prompt_token_len)
     # signature with no catch-all kwargs, so it can't be passed unconditionally.
     if task_name == "summarizer":
-        max_new_tokens = spec.max_new_tokens(raw_text, prompt_len, length=length)
+        max_new_tokens = spec.max_new_tokens(raw_text, prompt_len, length=effective_length)
     else:
         max_new_tokens = spec.max_new_tokens(raw_text, prompt_len)
     stopping_criteria = StoppingCriteriaList([SequenceStop(stop_token_ids, prompt_len)])
@@ -470,6 +515,7 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
         "prompt_len"      : prompt_len,
         "max_new_tokens"  : max_new_tokens,
         "output_tokens"   : output_token_count,
+        "length_used"     : effective_length,
     }
 
 
@@ -500,7 +546,10 @@ async def generate(req: PromptRequest):
         "response"      : gen["text"] if gen["text"] and len(gen["text"]) >= 2 else req.prompt,
         "task"          : req.task,
         "style"         : req.style if req.task == "style" else None,
-        "length"        : req.length if req.task == "summarizer" else None,
+        # Reports the length actually used (post server-side default), not
+        # just the raw request field, so a caller who omitted it can see
+        # what was applied.
+        "length"        : gen.get("length_used") if req.task == "summarizer" else None,
         "input_tokens"  : gen["prompt_len"],
         "max_cap_used"  : gen["max_new_tokens"],
         "output_tokens" : gen["output_tokens"],
@@ -556,8 +605,11 @@ class CompareRequest(BaseModel):
     adapters: List[str]
     task: str = "grammar"
     style: Optional[str] = None
-    # Only used when task == "summarizer" and a v06+ adapter is in the
-    # comparison set. Options: short | medium | long. See PromptRequest.length.
+    # Only used when task == "summarizer". Same auto-default behavior as
+    # PromptRequest.length — see run_generation(). Note each adapter in
+    # `adapters` gets its own version check, so mixing v02-v05 and v06+
+    # adapters in one comparison request correctly gives each the prompt
+    # format it was actually trained on.
     length: Optional[str] = None
     reference_text: Optional[str] = None
 
