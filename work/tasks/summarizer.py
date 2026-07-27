@@ -3,51 +3,88 @@ this file only affects the summarizer adapters' prompt, token budget,
 generation params, and decode post-processing; it cannot affect the other
 three tasks.
 
-The deployed summarizer adapters (v02-v05) were trained on a Llama-3 chat
-template (see summarizer/abstractive/{2,3,4,5}_train_summarizer_*.py), NOT
-the Alpaca "### Instruction:" format the other three tasks use — do not
-change prompt_summarizer() to match the other tasks' format without
-retraining the adapters."""
+v02-v05 were trained on a fixed "10%-30%" instruction line (see
+summarizer/abstractive/{2,3,4,5}_train_summarizer_*.py). v06
+(summarizer/abstractive/6_train_summarizer.py) replaced that with length
+conditioning instead: three prompt variants (short/medium/long), each
+tied to its own compression-ratio band during training. Both eras use the
+same Llama-3 chat template (NOT the Alpaca "### Instruction:" format the
+other three tasks use) — do not change the wrapper structure without
+retraining every adapter version.
+
+`length` (short|medium|long) selects the v06 variant. Passing length=None
+(the default) falls back to the legacy fixed instruction, which is what
+v02-v05 expect — this stays the default until server-side plumbing
+(serve_sinai.py) passes an explicit length through per-request. Until that
+plumbing exists, this file alone does NOT change what the live API sends
+for v06 — see the CLAUDE.md "Summarizer" section for the current status of
+that gap."""
 
 ASSISTANT_HEADER = "<|start_header_id|>assistant<|end_header_id|>\n\n"
 
+# Matches LENGTH_LINES in summarizer/abstractive/6_train_summarizer.py /
+# 6_test_summarizer.py byte-for-byte — do not edit independently of those.
+LENGTH_LINES = {
+    "short":  "සාරාංශය ඉතා කෙටි විය යුතුය — මුල් ලිපියේ දිගෙන් 10%ක් පමණ.",
+    "medium": "සාරාංශය මධ්‍යම දිගකින් විය යුතුය — මුල් ලිපියේ දිගෙන් 20%ක් පමණ.",
+    "long":   "සාරාංශය සවිස්තරාත්මක විය යුතුය — මුල් ලිපියේ දිගෙන් 35%ක් පමණ.",
+}
 
-def prompt_summarizer(text: str, **_) -> str:
-    # Must stay byte-for-byte identical to build_prompt() in
-    # summarizer/abstractive/4_test_summarizer.py / the format_prompt() in
-    # {2,3,4,5}_train_summarizer_*.py.
+# The v02-v05 instruction line — unchanged from before this fix, kept as
+# the default so existing behavior for those adapters does not change.
+LEGACY_LINE = "සාරාංශය මුල් ලිපියේ දිගෙන් 10% ත් 30% ත් අතර විය යුතුය."
+
+
+def prompt_summarizer(text: str, length: str = None, **_) -> str:
+    # length=None branch must stay byte-for-byte identical to build_prompt()
+    # in summarizer/abstractive/4_test_summarizer.py / format_prompt() in
+    # {2,3,4,5}_train_summarizer_*.py. length set branch must match
+    # 6_train_summarizer.format_prompt() / 6_test_summarizer.build_prompt().
+    line = LENGTH_LINES.get(length, LEGACY_LINE) if length else LEGACY_LINE
     return (
         "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n"
         "පහත සිංහල පුවත් ලිපිය සාරාංශ කරන්න.\n\n"
         "ලිපියේ ඇති තොරතුරු පමණක් භාවිතා කරන්න.\n"
-        "සාරාංශය මුල් ලිපියේ දිගෙන් 10% ත් 30% ත් අතර විය යුතුය.\n"
+        f"{line}\n"
         "අමතර අදහස්, විශ්ලේෂණ හෝ නව තොරතුරු එකතු නොකරන්න.\n\n"
         f"Article:\n{text}\n\n"
         "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
     )
 
 
-def max_new_tokens(raw_text: str, prompt_token_len: int) -> int:
-    """Calibrated directly from an audit of 5_qwen_summaries.jsonl (v05's
-    actual training data) rather than guessed: of 151,438 raw Qwen-generated
-    silver summaries, 73.6% get rejected by 5_train_summarizer_qwen.py's own
-    MIN/MAX_COMP_RATIO + MAX_SUMMARY_TOKENS filters (Qwen's natural output
-    averages ~55% compression despite being instructed to produce 10-30%).
-    Of the 26.4% that survive and the model actually trains on, compression
-    ratio (summary_words / article_words) clusters at median=0.408,
-    P75=0.460, P90=0.486 — roughly 50% higher than the 20-30% this function
-    previously assumed, which is why summaries kept truncating no matter how
-    much the budget was raised: the model was trained to want ~45-49% of the
-    article's length, not 20-30% of it.
+# Per-bucket budgets for the v06 path, mirroring
+# 6_test_summarizer.BUCKET_TOKEN_BUDGETS — only used when length is set.
+BUCKET_TOKEN_BUDGETS = {"short": 80, "medium": 130, "long": 200}
 
-    Uses P90 (~0.49) as the target ratio so most articles get enough budget
-    to finish. Word->token multiplier and buffer are kept generous (not
-    precisely measured) because over-provisioning is ~free: generation
-    already stops early via <|eot_id|>/stopping criteria once the model
-    naturally finishes, so a bigger ceiling only matters when the model
-    actually wants to keep going. Hard-capped near training's own
-    MAX_SUMMARY_TOKENS=150 ceiling (+ buffer) — no training example ever had
-    a longer summary than that, so there's no basis for budgeting past it."""
+
+def max_new_tokens(raw_text: str, prompt_token_len: int, length: str = None) -> int:
+    """v06 path (length set): fixed per-bucket budget, matching what
+    6_test_summarizer.py evaluates against.
+
+    Legacy path (length=None, v02-v05): calibrated directly from an audit
+    of 5_qwen_summaries.jsonl (v05's actual training data) rather than
+    guessed: of 151,438 raw Qwen-generated silver summaries, 73.6% get
+    rejected by 5_train_summarizer_qwen.py's own MIN/MAX_COMP_RATIO +
+    MAX_SUMMARY_TOKENS filters (Qwen's natural output averages ~55%
+    compression despite being instructed to produce 10-30%). Of the 26.4%
+    that survive and the model actually trains on, compression ratio
+    (summary_words / article_words) clusters at median=0.408, P75=0.460,
+    P90=0.486 — roughly 50% higher than the 20-30% this function
+    previously assumed, which is why summaries kept truncating no matter
+    how much the budget was raised: the model was trained to want ~45-49%
+    of the article's length, not 20-30% of it.
+
+    Uses P90 (~0.49) as the target ratio so most articles get enough
+    budget to finish. Word->token multiplier and buffer are kept generous
+    (not precisely measured) because over-provisioning is ~free:
+    generation already stops early via <|eot_id|>/stopping criteria once
+    the model naturally finishes, so a bigger ceiling only matters when
+    the model actually wants to keep going. Hard-capped near training's
+    own MAX_SUMMARY_TOKENS=150 ceiling (+ buffer) — no training example
+    ever had a longer summary than that, so there's no basis for
+    budgeting past it."""
+    if length in BUCKET_TOKEN_BUDGETS:
+        return BUCKET_TOKEN_BUDGETS[length]
     word_count = len(raw_text.split())
     target_words = word_count * 0.49
     return max(40, min(int(target_words * 3.0) + 30, 180))
@@ -62,6 +99,8 @@ REPETITION_PENALTY = 1.15
 # with the article's own opening phrase — observed corrupting the leading
 # consonant of the summary's first word whenever it echoed the article's
 # first few words (e.g. "හිටපු" -> "ිටපු", "ශ්‍රී ලංකා" -> "්‍රී ලංකා").
+# Confirmed unchanged for v06 (see 6_test_summarizer.py module docstring:
+# generation params must match serving exactly, or eval scores don't transfer).
 
 
 import re
@@ -92,7 +131,7 @@ def heal_sinhala_text(text: str) -> str:
 def decode(tokenizer, outputs, prompt_len: int) -> tuple[str, int]:
     """Decodes the FULL sequence and splits on the literal assistant-header
     string instead of slicing outputs[0][prompt_len:] — matches
-    generate_summary() in summarizer/abstractive/4_test_summarizer.py,
+    generate_summary() in summarizer/abstractive/{4,6}_test_summarizer.py,
     which does this specifically to avoid corrupting the first Sinhala
     grapheme cluster when the prompt/response boundary falls mid-token."""
     new_tokens = outputs[0][prompt_len:]
