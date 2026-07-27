@@ -122,7 +122,7 @@ model = AutoModelForCausalLM.from_pretrained(
     dtype          = torch.bfloat16,
     local_files_only     = True,
     device_map           = "auto",
-    attn_implementation  = "sdpa",
+    attn_implementation  = "eager",
 )
 
 
