@@ -207,16 +207,21 @@ model.eval()
 # ─────────────────────────────────────────────
 # PROMPT DISPATCH
 # ─────────────────────────────────────────────
-def build_prompt(task: str, text: str, style: Optional[str] = None) -> str:
+def build_prompt(task: str, text: str, style: Optional[str] = None, length: Optional[str] = None) -> str:
     """
     Pass-through if the client already sent a fully-formed prompt.
     Otherwise wrap raw text in the task's own template (owned by that
     task's module under tasks/ — see task_registry.py).
+
+    `length` (short|medium|long) is only meaningful for the summarizer
+    task's v06+ prompt (see work/tasks/summarizer.py); every other task's
+    prompt builder ignores unknown kwargs via **_, same as `style` already
+    does for non-style tasks.
     """
     if "### Instruction:" in text:
         return text
     spec = TASKS.get(task, TASKS["grammar"])
-    return spec.prompt_builder(text, style=style or DEFAULT_STYLE)
+    return spec.prompt_builder(text, style=style or DEFAULT_STYLE, length=length)
 
 
 # ─────────────────────────────────────────────
@@ -260,6 +265,10 @@ class PromptRequest(BaseModel):
     # Options: formal | sports | youth | editorial | feature
     # Defaults to "formal" if omitted.
     style  : Optional[str] = None
+    # Only used when task == "summarizer" and the resolved adapter is v06+.
+    # Options: short | medium | long. Omit (or None) to get the legacy
+    # v02-v05 fixed-instruction prompt — see work/tasks/summarizer.py.
+    length : Optional[str] = None
 
 
 # ─────────────────────────────────────────────
@@ -381,8 +390,13 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
     }
 
 
-def run_generation(task_name: str, raw_text: str, style: Optional[str], active_adapter: str) -> dict:
-    """Shared generation core used by both /generate and /compare."""
+def run_generation(task_name: str, raw_text: str, style: Optional[str], active_adapter: str, length: Optional[str] = None) -> dict:
+    """Shared generation core used by both /generate and /compare.
+
+    `length` is only consumed by the summarizer task (see build_prompt and
+    the max_new_tokens call below) — it's threaded through unconditionally
+    but every other task ignores it.
+    """
     adapter_clean = active_adapter.lower().replace("extractive_", "")
     task_clean = task_name.lower().replace("extractive_", "")
 
@@ -406,7 +420,7 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
 
     spec = TASKS.get(task_name, TASKS["grammar"])
 
-    full_prompt = build_prompt(task_name, raw_text, style)
+    full_prompt = build_prompt(task_name, raw_text, style, length)
     inputs      = tokenizer(full_prompt, return_tensors="pt").to("cuda")
     prompt_len  = inputs["input_ids"].shape[1]
 
@@ -415,7 +429,13 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
         for seq in STOP_SEQUENCES
     ]
 
-    max_new_tokens    = spec.max_new_tokens(raw_text, prompt_len)
+    # length is only accepted by tasks/summarizer.py's max_new_tokens — every
+    # other task's max_new_tokens has a fixed (raw_text, prompt_token_len)
+    # signature with no catch-all kwargs, so it can't be passed unconditionally.
+    if task_name == "summarizer":
+        max_new_tokens = spec.max_new_tokens(raw_text, prompt_len, length=length)
+    else:
+        max_new_tokens = spec.max_new_tokens(raw_text, prompt_len)
     stopping_criteria = StoppingCriteriaList([SequenceStop(stop_token_ids, prompt_len)])
 
     adapter_ctx = model.disable_adapter() if active_adapter == "base" else contextlib.nullcontext()
@@ -474,12 +494,13 @@ async def generate(req: PromptRequest):
         if not req.style:
             req.style = DEFAULT_STYLE
 
-    gen = run_generation(req.task, req.prompt, req.style, active_adapter=req.task)
+    gen = run_generation(req.task, req.prompt, req.style, active_adapter=req.task, length=req.length)
 
     return {
         "response"      : gen["text"] if gen["text"] and len(gen["text"]) >= 2 else req.prompt,
         "task"          : req.task,
         "style"         : req.style if req.task == "style" else None,
+        "length"        : req.length if req.task == "summarizer" else None,
         "input_tokens"  : gen["prompt_len"],
         "max_cap_used"  : gen["max_new_tokens"],
         "output_tokens" : gen["output_tokens"],
@@ -535,6 +556,9 @@ class CompareRequest(BaseModel):
     adapters: List[str]
     task: str = "grammar"
     style: Optional[str] = None
+    # Only used when task == "summarizer" and a v06+ adapter is in the
+    # comparison set. Options: short | medium | long. See PromptRequest.length.
+    length: Optional[str] = None
     reference_text: Optional[str] = None
 
 
@@ -784,7 +808,7 @@ async def compare_models(req: CompareRequest):
         start_time = time.perf_counter()
 
         try:
-            gen = run_generation(req.task, req.input_text, req.style, active_adapter=adapter_name)
+            gen = run_generation(req.task, req.input_text, req.style, active_adapter=adapter_name, length=req.length)
             output_text  = gen["text"] if gen["text"] and len(gen["text"]) >= 2 else req.input_text
             input_tokens = gen["prompt_len"]
             output_tokens = gen["output_tokens"]
@@ -832,4 +856,3 @@ async def compare_models(req: CompareRequest):
         })
 
     return results
-
