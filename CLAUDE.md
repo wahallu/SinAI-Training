@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This workspace develops **SinLlama** — a Sinhala-specialized LLM built on Meta Llama-3-8B, fine-tuned for four NLP tasks: grammar correction, headline generation, article summarization, and style rewriting. The inference API is served via FastAPI.
 
-All core work lives in `work/sinllama/`. A separate early-stage summarizer pipeline is in `summarizer/`.
+All core work lives in `work/sinllama/`. The summarizer's active training+eval pipeline is in `summarizer/abstractive/` (see "Summarizer" section below — despite the folder name, this is not a separate/legacy system).
 
 ---
 
@@ -34,14 +34,15 @@ python work/sinllama/scripts/train_summarizer.py
 python work/sinllama/scripts/test_grammar.py
 python work/sinllama/scripts/test_headline.py
 python work/sinllama/scripts/test_style.py
-python work/sinllama/scripts/test_summarizer.py
+python summarizer/abstractive/6_test_summarizer.py   # latest (v06, length-conditioned); {2,3,4,5}_test_summarizer.py for earlier adapters
 ```
 
 ### Inference server
 ```bash
-# Starts FastAPI on default port; loads SinLLaMA-merged-base plus all four
-# task adapters at startup
-uvicorn work.sinllama.serve_sinai:app --host 0.0.0.0 --port 8000
+# serve_sinai.py lives at work/serve_sinai.py and uses bare imports
+# (`from task_registry import ...`, `from tasks.summarizer import ...`),
+# so it must be run with work/ as the working directory, not repo root.
+cd work && uvicorn serve_sinai:app --host 0.0.0.0 --port 8000
 
 # API endpoints
 POST /generate   # body: {"prompt": "...", "task": "grammar|headline|summarizer|style", "style": "formal|sports|youth|editorial|feature"}
@@ -68,7 +69,7 @@ There are **two different model-loading patterns** in this codebase — understa
 
 ### Task adapter structure
 
-Each NLP task has its own LoRA adapter stored under `models/adapters/`:
+Each NLP task has its own LoRA adapter stored under `models/adapters/`. `serve_sinai.py`'s `find_latest_adapters()` auto-selects the highest-numbered folder present per task at startup (e.g. multiple `summarization_sinllama_v0N/` folders can coexist; the latest wins unless none are found, in which case it falls back to a hardcoded path):
 ```
 models/
 ├── SinLLaMA-merged-base/    ← shared base for all tasks
@@ -76,7 +77,7 @@ models/
 │   ├── grammar_sinllama_v13/
 │   ├── headline_sinllama_v17/
 │   ├── style_sinllama_v07/
-│   └── summarization_sinllama_v04/
+│   └── summarization_sinllama_v02/ ... v06/  (see Summarizer section)
 ```
 
 `serve_sinai.py` loads `SinLLaMA-merged-base` plus all four task adapters as
@@ -85,9 +86,9 @@ request via `model.set_adapter(task)` — see `ADAPTER_PATHS` at the top of the
 file. Training/test scripts instead load the base and attach a single
 adapter via `PeftModel.from_pretrained(model, ADAPTER_PATH)`.
 
-### Prompt format (Alpaca-style)
+### Prompt format (Alpaca-style, with one exception)
 
-All tasks use the same template. The `### Input:` block is task-dependent:
+Grammar, headline, style, and base use the same Alpaca-style template. The `### Input:` block is task-dependent:
 ```
 ### Instruction:
 {sinhala instruction text}
@@ -98,7 +99,9 @@ All tasks use the same template. The `### Input:` block is task-dependent:
 ### Response:
 ```
 
-`serve_sinai.py` auto-detects pre-formed prompts by checking for `"### Instruction:"` in the request body; raw text is wrapped by task-specific `prompt_*` builders.
+**Exception: the summarizer task uses a Llama-3 chat template** (`<|begin_of_text|><|start_header_id|>...`), not Alpaca — see `work/tasks/summarizer.py`. Do not assume the two are interchangeable.
+
+`serve_sinai.py` auto-detects pre-formed Alpaca prompts by checking for `"### Instruction:"` in the request body; raw text is wrapped by task-specific `prompt_*` builders.
 
 ### Dataset naming convention
 
@@ -116,6 +119,8 @@ Datasets follow a stage-based progression: `*_stage1.jsonl`, `*_stage2.jsonl`, e
 
 ---
 
-## Summarizer (separate pipeline)
+## Summarizer
 
-`summarizer/` is an independent earlier-stage project using mT5 fine-tuned for Sinhala summarization, predating the SinLlama approach. Dependencies are in `summarizer/requirements.txt`. It is not integrated with the `work/sinllama/` serving stack.
+`summarizer/` holds two things: an early mT5-base pipeline (predates the SinLlama approach, now used as a comparison "teacher" model in `serve_sinai.py`) and the active SinLLaMA summarizer pipeline (`summarizer/abstractive/`, adapters v02–v06), which trains the same `summarization_sinllama_v*` adapters served by `work/serve_sinai.py`. Despite the folder name, `summarizer/abstractive/` is not legacy — it's the current summarizer training+eval code. Dependencies are in `summarizer/requirements.txt`.
+
+**Known gap (as of 2026-07-27):** `work/tasks/summarizer.py`'s `prompt_summarizer()` only builds the fixed "10%-30%" instruction used by v02-v05. It has not been updated for v06's length-conditioned (short/medium/long) prompt format, so both `/generate` and `/compare` currently send v06 a prompt it wasn't trained on. `summarizer/abstractive/6_test_summarizer.py` builds the correct v06 prompt and is the source of truth until this is fixed.
