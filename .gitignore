@@ -43,6 +43,8 @@ unsloth_compiled_cache/
 **/.env
 api_keys.txt
 **/api_keys.txt
+*apikeys*
+**/*apikeys*
 *.key
 *.pem
 
