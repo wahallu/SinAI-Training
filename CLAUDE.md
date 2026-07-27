@@ -45,7 +45,7 @@ python summarizer/abstractive/6_test_summarizer.py   # latest (v06, length-condi
 cd work && uvicorn serve_sinai:app --host 0.0.0.0 --port 8000
 
 # API endpoints
-POST /generate   # body: {"prompt": "...", "task": "grammar|headline|summarizer|style", "style": "formal|sports|youth|editorial|feature"}
+POST /generate   # body: {"prompt": "...", "task": "grammar|headline|summarizer|style", "style": "formal|sports|youth|editorial|feature", "length": "short|medium|long"}
 GET  /tasks      # lists all tasks, styles, and example prompts
 GET  /health
 ```
@@ -123,4 +123,4 @@ Datasets follow a stage-based progression: `*_stage1.jsonl`, `*_stage2.jsonl`, e
 
 `summarizer/` holds two things: an early mT5-base pipeline (predates the SinLlama approach, now used as a comparison "teacher" model in `serve_sinai.py`) and the active SinLLaMA summarizer pipeline (`summarizer/abstractive/`, adapters v02–v06), which trains the same `summarization_sinllama_v*` adapters served by `work/serve_sinai.py`. Despite the folder name, `summarizer/abstractive/` is not legacy — it's the current summarizer training+eval code. Dependencies are in `summarizer/requirements.txt`.
 
-**Known gap (as of 2026-07-27):** `work/tasks/summarizer.py`'s `prompt_summarizer()` only builds the fixed "10%-30%" instruction used by v02-v05. It has not been updated for v06's length-conditioned (short/medium/long) prompt format, so both `/generate` and `/compare` currently send v06 a prompt it wasn't trained on. `summarizer/abstractive/6_test_summarizer.py` builds the correct v06 prompt and is the source of truth until this is fixed.
+**Length conditioning (v06+):** `work/tasks/summarizer.py`'s `prompt_summarizer()` accepts a `length` param (`short`/`medium`/`long`) that selects v06's length-conditioned prompt; omitting it builds the legacy v02-v05 fixed-instruction prompt instead. `work/serve_sinai.py` auto-defaults `length` to `"medium"` per-request when the resolved adapter's version is >= `SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION` (currently 6.0, see `run_generation()`), so callers that don't send `length` still get a matching prompt for v06+, and v02-v05 behavior is unaffected. `/compare` checks this per adapter in the comparison set, so mixed v02-v05/v06+ comparisons get the correct prompt for each. Update `SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION` if a future summarizer version changes the prompt format again.
