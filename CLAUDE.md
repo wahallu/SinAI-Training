@@ -24,7 +24,8 @@ python work/sinllama/prepare_sinllama_base.py
 ### Training (run from repo root or `work/sinllama/`)
 ```bash
 python work/sinllama/scripts/train_grammar.py
-python work/sinllama/scripts/train_headline.py
+python work/sinllama/scripts/train_headline.py       # v17, fixed "4-7 words" prompt
+python work/sinllama/scripts/train_headline_v18.py   # v18, length-conditioned (see Headline section)
 python work/sinllama/scripts/train_style.py
 python work/sinllama/scripts/train_summarizer.py
 ```
@@ -46,6 +47,7 @@ cd work && uvicorn serve_sinai:app --host 0.0.0.0 --port 8000
 
 # API endpoints
 POST /generate   # body: {"prompt": "...", "task": "grammar|headline|summarizer|style", "style": "formal|sports|youth|editorial|feature", "length": "short|medium|long"}
+                 # length applies to summarizer (compression band) and headline (word band)
 GET  /tasks      # lists all tasks, styles, and example prompts
 GET  /health
 ```
@@ -118,6 +120,41 @@ Datasets follow a stage-based progression: `*_stage1.jsonl`, `*_stage2.jsonl`, e
 - **`rouge_score` library breaks on Sinhala Unicode** — `test_grammar.py` implements ROUGE natively on grapheme clusters. Do not replace with the standard library.
 
 ---
+
+## Headline
+
+**Length bands (short 3-5 / medium 6-7 / long 8-10 words).** Non-overlapping,
+so a word count maps to exactly one band. Defined in three places that must
+stay in sync: `work/tasks/headline.py` (`HEADLINE_LENGTHS`, token budgets),
+`SinhalaJournalLLM/apps/backend-api/app/core/prompts.py` (the prompt the live
+web app actually sends), and `scripts/train_headline_v18.py` (training).
+
+`prompt_headline()` takes `length`; passing `None` reproduces the
+pre-length-control prompt and the 60/5 token budget byte-for-byte, and nothing
+defaults it on the caller's behalf — so `/compare` and any raw-text client are
+unaffected unless they ask for a band. When `length` is set, the band drives
+both the prompt line and per-band `max_new_tokens` / `min_new_tokens` (via
+`TaskSpec.length_aware` and `TaskSpec.min_new_tokens_for`, which replaced the
+old task-name branching in `run_generation()`).
+
+**v17 is not length-conditioned.** All 48K of its training examples carried the
+same fixed "Between 4 and 7 words" line, so the band line is a nudge it only
+partly obeys. Measured against v17 on the live server: short 4/4 and medium 5/5
+land in-band, long 1/5 — it stops at ~7 words regardless of the instruction.
+Two things address that:
+
+1. `min_new_tokens` per band (13 for long vs. the flat 5 before) blocks EOS
+   until the band's lower edge is plausible. Sized from a measured
+   tokens-per-word ratio on real v17 output (min 1.20, median 1.71, p90 2.67 —
+   the spread is why no token floor can *guarantee* a word count).
+2. `train_headline_v18.py` buckets the dataset by each reference headline's
+   actual word count and trains the band line as a real condition. This is the
+   headline equivalent of the summarizer's v02-v05 → v06 move below.
+
+The hard guarantee on the upper bound lives outside this repo, in
+backend-api's `headline_service.py`: out-of-band candidates are regenerated
+with a corrective hint (2 rounds), then anything still over the ceiling is
+trimmed to it.
 
 ## Summarizer
 

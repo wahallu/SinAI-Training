@@ -219,10 +219,11 @@ def build_prompt(task: str, text: str, style: Optional[str] = None, length: Opti
     Otherwise wrap raw text in the task's own template (owned by that
     task's module under tasks/ — see task_registry.py).
 
-    `length` (short|medium|long) is only meaningful for the summarizer
-    task's v06+ prompt (see work/tasks/summarizer.py); every other task's
-    prompt builder ignores unknown kwargs via **_, same as `style` already
-    does for non-style tasks.
+    `length` (short|medium|long) is meaningful for the summarizer task's
+    v06+ prompt (see work/tasks/summarizer.py) and for the headline task's
+    word band (see work/tasks/headline.py); every other task's prompt
+    builder ignores unknown kwargs via **_, same as `style` already does for
+    non-style tasks.
     """
     if "### Instruction:" in text:
         return text
@@ -271,11 +272,18 @@ class PromptRequest(BaseModel):
     # Options: formal | sports | youth | editorial | feature
     # Defaults to "formal" if omitted.
     style  : Optional[str] = None
-    # Only used when task == "summarizer". Options: short | medium | long.
-    # If omitted, run_generation() auto-defaults to "medium" when the
-    # resolved adapter is v06+ (which requires a length line — see
-    # SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION below), or falls back to
-    # the legacy v02-v05 fixed-instruction prompt otherwise.
+    # Used by the summarizer and headline tasks. Options: short | medium | long.
+    #
+    # summarizer: if omitted, run_generation() auto-defaults to "medium" when
+    # the resolved adapter is v06+ (which requires a length line — see
+    # SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION below), or falls back to the
+    # legacy v02-v05 fixed-instruction prompt otherwise.
+    #
+    # headline: selects a target word band (tasks/headline.py
+    # HEADLINE_LENGTHS) — it sets the prompt's band line for raw-text
+    # requests and the per-band token budget for every request. Never
+    # auto-defaulted: omitting it reproduces the pre-length-control behavior
+    # exactly, since no headline adapter is length-conditioned yet.
     length : Optional[str] = None
 
 
@@ -425,9 +433,9 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
 def run_generation(task_name: str, raw_text: str, style: Optional[str], active_adapter: str, length: Optional[str] = None) -> dict:
     """Shared generation core used by both /generate and /compare.
 
-    `length` is only consumed by the summarizer task (see build_prompt and
-    the max_new_tokens call below) — it's threaded through unconditionally
-    but every other task ignores it.
+    `length` is consumed by the summarizer and headline tasks (see
+    build_prompt and the max_new_tokens call below) — it's threaded through
+    unconditionally but every other task ignores it.
     """
     adapter_clean = active_adapter.lower().replace("extractive_", "")
     task_clean = task_name.lower().replace("extractive_", "")
@@ -474,13 +482,22 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
         for seq in STOP_SEQUENCES
     ]
 
-    # length is only accepted by tasks/summarizer.py's max_new_tokens — every
-    # other task's max_new_tokens has a fixed (raw_text, prompt_token_len)
-    # signature with no catch-all kwargs, so it can't be passed unconditionally.
-    if task_name == "summarizer":
+    # Only length-aware tasks (summarizer, headline) accept a `length` kwarg
+    # on max_new_tokens — every other task has a fixed
+    # (raw_text, prompt_token_len) signature with no catch-all kwargs, so it
+    # can't be passed unconditionally. TaskSpec.length_aware carries that
+    # per-task fact so this core stays free of task-name branching.
+    if spec.length_aware:
         max_new_tokens = spec.max_new_tokens(raw_text, prompt_len, length=effective_length)
     else:
         max_new_tokens = spec.max_new_tokens(raw_text, prompt_len)
+
+    # Tasks whose generation floor varies by length band (headline) override
+    # the fixed spec.min_new_tokens per request.
+    min_new_tokens = spec.min_new_tokens
+    if spec.min_new_tokens_for is not None:
+        min_new_tokens = spec.min_new_tokens_for(effective_length)
+
     stopping_criteria = StoppingCriteriaList([SequenceStop(stop_token_ids, prompt_len)])
 
     adapter_ctx = model.disable_adapter() if active_adapter == "base" else contextlib.nullcontext()
@@ -503,8 +520,8 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
                 gen_kwargs["no_repeat_ngram_size"] = spec.no_repeat_ngram_size
             if spec.do_sample:
                 gen_kwargs["top_p"] = spec.top_p
-            if spec.min_new_tokens:
-                gen_kwargs["min_new_tokens"] = spec.min_new_tokens
+            if min_new_tokens:
+                gen_kwargs["min_new_tokens"] = min_new_tokens
             outputs = model.generate(**inputs, **gen_kwargs)
 
     decode_fn = spec.decode or default_decode
@@ -549,7 +566,7 @@ async def generate(req: PromptRequest):
         # Reports the length actually used (post server-side default), not
         # just the raw request field, so a caller who omitted it can see
         # what was applied.
-        "length"        : gen.get("length_used") if req.task == "summarizer" else None,
+        "length"        : gen.get("length_used") if req.task in ("summarizer", "headline") else None,
         "input_tokens"  : gen["prompt_len"],
         "max_cap_used"  : gen["max_new_tokens"],
         "output_tokens" : gen["output_tokens"],

@@ -27,6 +27,14 @@ class TaskSpec:
     top_p: float = 1.0
     min_new_tokens: int = 0
     decode: Optional[Callable] = None  # (tokenizer, outputs, prompt_len) -> (text, output_tokens); None = gateway default
+    # True when this task's max_new_tokens accepts a `length` kwarg. Most
+    # tasks have a fixed (raw_text, prompt_token_len) signature and would
+    # raise on one, so the gateway checks this flag instead of the task name.
+    length_aware: bool = False
+    # Optional (length) -> int override for min_new_tokens, used by tasks
+    # whose generation floor depends on the requested length band. None means
+    # the fixed min_new_tokens above applies to every request.
+    min_new_tokens_for: Optional[Callable] = None
 
 
 TASKS: dict[str, TaskSpec] = {
@@ -46,6 +54,8 @@ TASKS: dict[str, TaskSpec] = {
         temperature=headline.TEMPERATURE,
         top_p=headline.TOP_P,
         min_new_tokens=headline.MIN_NEW_TOKENS,
+        length_aware=True,
+        min_new_tokens_for=headline.min_new_tokens_for,
     ),
     "style": TaskSpec(
         name="style",
@@ -59,6 +69,7 @@ TASKS: dict[str, TaskSpec] = {
         max_new_tokens=summarizer.max_new_tokens,
         repetition_penalty=summarizer.REPETITION_PENALTY,
         decode=summarizer.decode,
+        length_aware=True,
     ),
     "extractive": TaskSpec(
         name="extractive",
