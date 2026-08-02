@@ -292,6 +292,15 @@ class PromptRequest(BaseModel):
     #
     # If omitted, the server uses the default adapter for the task.
     adapter: Optional[str] = None
+    # Self-consistency sampling: generate this many candidates in one call
+    # (HF's num_return_sequences) instead of the usual one. Forces
+    # do_sample=True even for tasks whose default is greedy (e.g. grammar),
+    # using TaskSpec.ensemble_temperature/ensemble_top_p rather than
+    # whatever temperature/top_p the task's normal single-candidate path
+    # uses (if any) — the ensemble is meant to stay conservative, not
+    # creative. Omit (or send null/1) to reproduce today's single-candidate
+    # response exactly, with no "candidates" key on the response.
+    num_candidates: Optional[int] = None
 
 
 # ─────────────────────────────────────────────
@@ -437,12 +446,20 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
     }
 
 
-def run_generation(task_name: str, raw_text: str, style: Optional[str], active_adapter: str, length: Optional[str] = None) -> dict:
+def run_generation(
+    task_name: str, raw_text: str, style: Optional[str], active_adapter: str,
+    length: Optional[str] = None, num_candidates: int = 1,
+) -> dict:
     """Shared generation core used by both /generate and /compare.
 
     `length` is consumed by the summarizer and headline tasks (see
     build_prompt and the max_new_tokens call below) — it's threaded through
     unconditionally but every other task ignores it.
+
+    `num_candidates` > 1 requests that many sampled candidates in one
+    generate() call. 1, the default, reproduces today's single-candidate
+    behavior exactly — same gen_kwargs, same return shape (no "candidates"
+    key) — see the `ensemble` branch below for what changes when it's not.
     """
     adapter_clean = active_adapter.lower().replace("extractive_", "")
     task_clean = task_name.lower().replace("extractive_", "")
@@ -509,14 +526,28 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
 
     adapter_ctx = model.disable_adapter() if active_adapter == "base" else contextlib.nullcontext()
 
+    # >1 candidate forces sampling on even for a normally-greedy task, at the
+    # task's ensemble_* values rather than its temperature/top_p (which were
+    # never tuned for sampling if the task's own do_sample is False — those
+    # fields exist on TaskSpec but sit unused by the single-candidate path
+    # today). A task that already samples (do_sample=True, e.g. headline)
+    # keeps using its own temperature/top_p for the ensemble too, since those
+    # values are already validated for that task.
+    ensemble = num_candidates > 1
+    do_sample = spec.do_sample or ensemble
+    if ensemble and not spec.do_sample:
+        temperature, top_p = spec.ensemble_temperature, spec.ensemble_top_p
+    else:
+        temperature, top_p = spec.temperature, spec.top_p
+
     with _generation_lock:
         if active_adapter != "base":
             model.set_adapter(active_adapter)
         with adapter_ctx, torch.no_grad():
             gen_kwargs = dict(
                 max_new_tokens     = max_new_tokens,
-                do_sample          = spec.do_sample,
-                temperature        = spec.temperature,
+                do_sample          = do_sample,
+                temperature        = temperature,
                 repetition_penalty = spec.repetition_penalty,
                 eos_token_id       = tokenizer.eos_token_id,
                 pad_token_id       = tokenizer.eos_token_id,
@@ -525,22 +556,38 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
             )
             if spec.no_repeat_ngram_size:
                 gen_kwargs["no_repeat_ngram_size"] = spec.no_repeat_ngram_size
-            if spec.do_sample:
-                gen_kwargs["top_p"] = spec.top_p
+            if do_sample:
+                gen_kwargs["top_p"] = top_p
             if min_new_tokens:
                 gen_kwargs["min_new_tokens"] = min_new_tokens
+            if ensemble:
+                gen_kwargs["num_return_sequences"] = num_candidates
             outputs = model.generate(**inputs, **gen_kwargs)
 
     decode_fn = spec.decode or default_decode
-    result, output_token_count = decode_fn(tokenizer, outputs, prompt_len)
 
-    return {
+    if ensemble:
+        candidates = []
+        output_token_count = 0
+        for i, row in enumerate(outputs):
+            text, count = decode_fn(tokenizer, row.unsqueeze(0), prompt_len)
+            candidates.append(text)
+            if i == 0:
+                result, output_token_count = text, count
+    else:
+        candidates = None
+        result, output_token_count = decode_fn(tokenizer, outputs, prompt_len)
+
+    response = {
         "text"            : result,
         "prompt_len"      : prompt_len,
         "max_new_tokens"  : max_new_tokens,
         "output_tokens"   : output_token_count,
         "length_used"     : effective_length,
     }
+    if candidates is not None:
+        response["candidates"] = candidates
+    return response
 
 
 def resolve_adapter(task: str, adapter: Optional[str]) -> str:
@@ -636,9 +683,10 @@ async def generate(req: PromptRequest):
         req.style,
         active_adapter=active_adapter,
         length=req.length,
+        num_candidates=req.num_candidates or 1,
     )
 
-    return {
+    result = {
         "response": (
             gen["text"]
             if gen["text"] and len(gen["text"]) >= 2
@@ -656,6 +704,9 @@ async def generate(req: PromptRequest):
         "max_cap_used": gen["max_new_tokens"],
         "output_tokens": gen["output_tokens"],
     }
+    if gen.get("candidates"):
+        result["candidates"] = gen["candidates"]
+    return result
 
 @app.get("/health")
 def health():
