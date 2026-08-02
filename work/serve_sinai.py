@@ -225,7 +225,7 @@ def build_prompt(task: str, text: str, style: Optional[str] = None, length: Opti
     builder ignores unknown kwargs via **_, same as `style` already does for
     non-style tasks.
     """
-    if "### Instruction:" in text:
+    if "### Instruction:" in text or "<|begin_of_text|>" in text:
         return text
     spec = TASKS.get(task, TASKS["grammar"])
     return spec.prompt_builder(text, style=style or DEFAULT_STYLE, length=length)
