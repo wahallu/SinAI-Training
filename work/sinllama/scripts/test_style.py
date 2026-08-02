@@ -24,11 +24,11 @@ SINLLAMA_BASE  = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
 # overfitting fixes (rank 16, 3 epochs, weight_decay) - eval_loss dropped
 # from 1.087 (v08) to 0.849, and the train/eval loss gap shrank from
 # 2.28x to 1.26x, confirming the overfitting fixes worked.
-STYLE_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v09"
+STYLE_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v11"
 
 # ✅ UPDATED: must match TRAIN_DATA_PATH in train_style_rewriter.py for v09.
 # CONFIRM this matches the exact file you trained v09 on.
-TEST_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_dub.jsonl"
+TEST_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_final_cleaned.jsonl"
 
 # ✅ NEW: must match TRAIN_SPLIT / SEED in train_style_rewriter.py exactly,
 # or the "held-out" test set here won't actually match what the trainer
@@ -107,6 +107,9 @@ print("   Adapter loaded ✅")
 # feeding it a differently-shaped prompt than it actually learned on.
 # Must stay byte-for-byte identical to train_style_rewriter.py's version.
 def format_prompt(instruction: str, article: str) -> str:
+    # ✅ FIXED: was missing rules 8, 9, 10 that the model was trained with.
+    # The mismatch meant the model saw a different prompt shape at eval
+    # than what it learned during training, directly hurting all scores.
     return (
         "### Instruction:\n"
         f"{instruction}\n\n"
@@ -118,7 +121,14 @@ def format_prompt(instruction: str, article: str) -> str:
         "5. Do NOT add new facts or events\n"
         "6. Apply the style while preserving ALL factual content\n"
         "7. Keep all names, numbers, and dates in EXACTLY their original "
-        "wording - only change sentence structure and tone around them\n\n"
+        "wording - only change sentence structure and tone around them\n"
+        "8. Preserve gender-marked honorifics EXACTLY (මහත්මිය stays "
+        "මහත්මිය, මහතා stays මහතා) - never change a person's honorific "
+        "or implied gender\n"
+        "9. Text inside quotation marks must be copied VERBATIM from the "
+        "original - never reword, translate, or insert words into a quote\n"
+        "10. Never introduce symbols, numbers, durations, or dates that "
+        "do not appear in the source article\n\n"
         "### Input:\n"
         f"{article}\n\n"
         "### Response:\n"
@@ -600,7 +610,7 @@ STYLE_INSTRUCTIONS = {
 # this evaluates only on articles the adapter never trained on.
 # ──────────────────────────────────────────────
 def load_test_data(filepath=TEST_DATA_PATH, split_ratio=TRAIN_SPLIT, seed=SEED,
-                    n_articles=1, min_words=500):
+                    n_articles=1, min_words=40):
     """
     ✅ UPDATED: selects N articles (default 1) with at least min_words
     words from the held-out val set that have all 5 styles present, and
@@ -670,10 +680,10 @@ def load_test_data(filepath=TEST_DATA_PATH, split_ratio=TRAIN_SPLIT, seed=SEED,
     return val_records
 
 print("\n📂 Loading test dataset...")
-# ✅ WIDENED further: 5 -> 10 articles for a more stable average (lower
-# min_words since more articles are needed to fill 10 while still
-# requiring all 5 styles present).
-test_records = load_test_data(n_articles=10, min_words=150)
+# ✅ FIXED: min_words was 150 but the cleaned dataset's held-out articles
+# with all 5 styles max out at ~121 words, so 150 selected 0 articles.
+# Lowered to 40 and increased n_articles to 20 to use most qualifying articles.
+test_records = load_test_data(n_articles=20, min_words=40)
 print(f"   Using {len(test_records)} samples for evaluation "
       f"({len(test_records) // len(STYLE_IDS)} articles × 5 styles).")
 

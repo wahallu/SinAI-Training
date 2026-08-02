@@ -285,6 +285,13 @@ class PromptRequest(BaseModel):
     # auto-defaulted: omitting it reproduces the pre-length-control behavior
     # exactly, since no headline adapter is length-conditioned yet.
     length : Optional[str] = None
+    # Optional adapter override.
+    # Example:
+    # grammar_sinllama_v13
+    # headline_sinllama_v17
+    #
+    # If omitted, the server uses the default adapter for the task.
+    adapter: Optional[str] = None
 
 
 # ─────────────────────────────────────────────
@@ -536,42 +543,119 @@ def run_generation(task_name: str, raw_text: str, style: Optional[str], active_a
     }
 
 
+def resolve_adapter(task: str, adapter: Optional[str]) -> str:
+    """
+    Resolves which PEFT adapter should actually run.
+
+    If no adapter override is given, simply return the
+    generic task alias registered during startup.
+
+    If an override is supplied:
+
+      • verify it exists
+      • verify it belongs to the same task
+      • load it on-demand if necessary
+    """
+
+    if not adapter:
+        return task
+
+    discovered = discover_adapters()
+
+    if adapter not in discovered:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": f"Unknown adapter '{adapter}'.",
+                "available": sorted(
+                    n for n in discovered
+                    if get_adapter_category(n) == task
+                ),
+            },
+        )
+
+    category = get_adapter_category(adapter)
+
+    if category != task:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": (
+                    f"Adapter '{adapter}' is a {category} adapter, "
+                    f"but task is '{task}'."
+                ),
+                "available": sorted(
+                    n for n in discovered
+                    if get_adapter_category(n) == task
+                ),
+            },
+        )
+
+    if adapter not in LOADED_ADAPTERS:
+        print(f"[INFO] Loading adapter on-the-fly for /generate: {adapter}")
+
+        with _generation_lock:
+            model.load_adapter(
+                discovered[adapter],
+                adapter_name=adapter,
+            )
+            LOADED_ADAPTERS.add(adapter)
+
+    return adapter
+
+
 # ─────────────────────────────────────────────
 # ENDPOINTS
 # ─────────────────────────────────────────────
 @app.post("/generate")
 async def generate(req: PromptRequest):
+
     if req.task not in TASKS:
         req.task = "grammar"
 
     if req.task == "style":
         if req.style and req.style not in VALID_STYLES:
             raise HTTPException(
-                status_code = 422,
-                detail      = {
-                    "error"  : f"Unknown style '{req.style}'.",
-                    "valid"  : sorted(VALID_STYLES),
+                status_code=422,
+                detail={
+                    "error": f"Unknown style '{req.style}'.",
+                    "valid": sorted(VALID_STYLES),
                     "default": DEFAULT_STYLE,
                 },
             )
+
         if not req.style:
             req.style = DEFAULT_STYLE
 
-    gen = run_generation(req.task, req.prompt, req.style, active_adapter=req.task, length=req.length)
+    # Resolve requested adapter (or task default)
+    active_adapter = resolve_adapter(req.task, req.adapter)
+
+    gen = run_generation(
+        req.task,
+        req.prompt,
+        req.style,
+        active_adapter=active_adapter,
+        length=req.length,
+    )
 
     return {
-        "response"      : gen["text"] if gen["text"] and len(gen["text"]) >= 2 else req.prompt,
-        "task"          : req.task,
-        "style"         : req.style if req.task == "style" else None,
-        # Reports the length actually used (post server-side default), not
-        # just the raw request field, so a caller who omitted it can see
-        # what was applied.
-        "length"        : gen.get("length_used") if req.task in ("summarizer", "headline") else None,
-        "input_tokens"  : gen["prompt_len"],
-        "max_cap_used"  : gen["max_new_tokens"],
-        "output_tokens" : gen["output_tokens"],
+        "response": (
+            gen["text"]
+            if gen["text"] and len(gen["text"]) >= 2
+            else req.prompt
+        ),
+        "task": req.task,
+        "adapter": active_adapter,
+        "style": req.style if req.task == "style" else None,
+        "length": (
+            gen.get("length_used")
+            if req.task in ("summarizer", "headline")
+            else None
+        ),
+        "input_tokens": gen["prompt_len"],
+        "max_cap_used": gen["max_new_tokens"],
+        "output_tokens": gen["output_tokens"],
     }
-
 
 @app.get("/health")
 def health():

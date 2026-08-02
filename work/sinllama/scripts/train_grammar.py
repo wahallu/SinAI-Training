@@ -4,7 +4,10 @@ from transformers import AutoTokenizer
 from peft import PeftModel
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
+import hashlib
 import json
+import os
+import re
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -12,10 +15,10 @@ import json
 # ✅ NEW: point directly to pre-merged SinLLaMA base
 #    Same as test script — no more 4-step chain
 SINLLAMA_BASE = "./models/SinLLaMA-merged-base"
-# ⚠️ UPDATE THIS to whatever you name cleaned_v5.jsonl on this box
-#    (previous rounds: cleaned_v3 -> ...stage6 -> v16, cleaned_v4 -> v17)
-DATA_PATH     = "data/grammar_manual_dataset_stage9.jsonl"
-OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v19"
+# ⚠️ UPDATE per round. Previous: cleaned_v3 -> v16, cleaned_v4 -> v17,
+#    cleaned_v5 -> v19, cleaned_v7_full -> v20/v21.
+DATA_PATH     = "data/grammar_manual_dataset_stage11.jsonl"
+OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v22"
 
 # ✅ v18 changes BOTH data and LoRA capacity at once (user-directed).
 #    NOTE: this deliberately breaks the one-variable-at-a-time rule the
@@ -50,6 +53,53 @@ print(f"   Changed  : {changed}  ({changed/len(samples)*100:.1f}%)")
 print(f"   Unchanged: {unchanged} ({unchanged/len(samples)*100:.1f}%)")
 if changed / len(samples) > 0.65:
     print("   ⚠️  WARNING: >65% changed — consider adding more no-change examples.")
+
+# ─────────────────────────────────────────────
+# DATASET FINGERPRINT
+#
+# v20 and v21 produced byte-identical scores on all four stages. The likeliest
+# reason is simply that the v21 data delta was tiny (~0.5% of rows), but a
+# stale upload or a reused HF cache would look EXACTLY the same from the
+# outside — and we had no way to tell the two apart after the fact.
+#
+# So record what was actually trained on. The hash goes in the run log, and any
+# two runs sharing a hash are the same data by definition, no inference needed.
+# ─────────────────────────────────────────────
+_h = hashlib.sha256()
+for s in samples:
+    _h.update((s["input"] + "\x00" + s["output"] + "\x01").encode("utf-8"))
+DATA_FINGERPRINT = _h.hexdigest()[:16]
+
+# Canaries: specific corrections whose presence/absence distinguishes dataset
+# versions. Cheap to compute, and they fail loudly rather than silently.
+_ZWJ = "‍"
+_canaries = {
+    "teaches තරග→තරඟ":  sum(1 for s in samples
+                            if re.search(r"(?<![඀-෿])තරග", s["input"])
+                            and "තරඟ" in s["output"]),
+    "BAD gold තරග":     sum(1 for s in samples
+                            if re.search(r"(?<![඀-෿])තරග", s["output"])),
+    "conjunct ්‍ය/්‍ර": sum(1 for s in samples
+                            if ("්" + _ZWJ + "ය" in s["output"]
+                                and "්" + _ZWJ + "ය" not in s["input"])
+                            or ("්" + _ZWJ + "ර" in s["output"]
+                                and "්" + _ZWJ + "ර" not in s["input"])),
+    "SOV word-order":   sum(1 for s in samples
+                            if s["input"] != s["output"]
+                            and sorted(s["input"].rstrip(".").split())
+                             == sorted(s["output"].rstrip(".").split())),
+}
+print(f"   Fingerprint: {DATA_FINGERPRINT}   ({os.path.basename(DATA_PATH)})")
+for k, v in _canaries.items():
+    print(f"     {k:20s}: {v}")
+
+# cleaned_v8_full.jsonl should report 27064 rows / 64.9% changed and canaries
+# 315 / 10 / ~3932 / ~1059. A materially different reading means the file on
+# this box is not the one that was built — stop and re-upload.
+if _canaries["BAD gold තරග"] > 40:
+    print("   ⚠️  WARNING: තරග appears as CORRECT gold in "
+          f"{_canaries['BAD gold තරග']} rows. Expected <=10 — this looks like "
+          "the PRE-FIX file. Re-upload before training.")
 
 # ─────────────────────────────────────────────
 # LOAD TOKENIZER
@@ -185,9 +235,23 @@ def format_prompt(example):
 # LOAD + FORMAT DATASET
 # ─────────────────────────────────────────────
 print("🔹 Loading dataset...")
-dataset = load_dataset("json", data_files=DATA_PATH)
+# download_mode="force_redownload" makes load_dataset re-read the file instead of
+# reusing a cached Arrow build. The cache is keyed on the path, so editing a file
+# in place and keeping its name is precisely the case it can get wrong — and it
+# fails silently, which is the worst property for something feeding a 2.5h run.
+dataset = load_dataset("json", data_files=DATA_PATH,
+                       download_mode="force_redownload")
 dataset = dataset.map(format_prompt, remove_columns=dataset["train"].column_names)
 print(f"   Dataset size: {len(dataset['train'])} examples")
+
+# Cross-check the loaded dataset against the raw file read at the top. If these
+# disagree, load_dataset served something other than the file on disk.
+if len(dataset["train"]) != len(samples):
+    raise SystemExit(
+        f"❌ Dataset mismatch: raw file has {len(samples)} rows but "
+        f"load_dataset returned {len(dataset['train'])}. Cache is stale — "
+        f"run: rm -rf ~/.cache/huggingface/datasets"
+    )
 
 # ─────────────────────────────────────────────
 # v15 ADDITION — small held-out validation split
@@ -221,9 +285,19 @@ print(f"   Eval split   : {len(eval_data)} examples (held out, monitoring only)"
 #   basis actually used for gradient updates.
 # ─────────────────────────────────────────────
 import math
+
+# v22: 4 epochs, down from 5.
+#   cleaned_v8_full is 27,064 rows vs cleaned_v7_full's 17,532 — 1.54x. At the
+#   same effective batch of 8 that makes each epoch 54% more gradient updates,
+#   so 4 epochs of v8 is ~6.2 epochs of v7 in steps. Keeping 5 would be a
+#   ~7.7-epoch-equivalent run and the first real overfitting risk in the series.
+#   v19's eval_loss was still falling at 5 epochs on the SMALLER set, which is
+#   why 5 was right then and is not now.
+#   WATCH: if eval_loss is still falling at epoch 4, 5 is worth one run.
+EPOCHS       = 4
 n_samples    = len(train_data)
 steps_epoch  = math.ceil(n_samples / 8)
-max_steps    = steps_epoch * 5
+max_steps    = steps_epoch * EPOCHS
 warmup_steps = round(max_steps * 0.1)
 save_steps   = round(max_steps / 2)
 # v18: eval once per epoch instead of twice per RUN. With ~5x the
@@ -236,6 +310,10 @@ save_steps   = round(max_steps / 2)
 eval_steps   = steps_epoch
 
 print(f"\n📊 Hyperparameters:")
+print(f"   data         = {DATA_PATH}")
+print(f"   fingerprint  = {DATA_FINGERPRINT}")
+print(f"   adapter      = {OUTPUT_DIR}")
+print(f"   epochs       = {EPOCHS}")
 print(f"   samples      = {n_samples}")
 print(f"   steps/epoch  = {steps_epoch}")
 print(f"   max_steps    = {max_steps}")
