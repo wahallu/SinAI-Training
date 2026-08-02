@@ -33,7 +33,8 @@ python work/sinllama/scripts/train_summarizer.py
 ### Evaluation / Testing
 ```bash
 python work/sinllama/scripts/test_grammar.py
-python work/sinllama/scripts/test_headline.py
+python work/sinllama/scripts/test_headline.py         # v17 only: fixed 4-7 word band, not length-aware
+python work/sinllama/scripts/test_headline_v18.py     # v18: per-band in-band rate + artifact rate + own-band ROUGE
 python work/sinllama/scripts/test_style.py
 python summarizer/abstractive/6_test_summarizer.py   # latest (v06, length-conditioned); {2,3,4,5}_test_summarizer.py for earlier adapters
 ```
@@ -155,6 +156,16 @@ The hard guarantee on the upper bound lives outside this repo, in
 backend-api's `headline_service.py`: out-of-band candidates are regenerated
 with a corrective hint (2 rounds), then anything still over the ceiling is
 trimmed to it.
+
+**v18 is trained and live** (auto-selected by `find_latest_adapters()`, no
+config change needed). A 9-sample smoke test against the live server (3
+articles x 3 bands, identical prompts on both adapters) showed v18 landing
+8/9 in-band vs. v17's 6/9, with the long band moving from 2/3 to 3/3 and fewer
+trailing scraper artifacts (1/9 vs. 2/9). For a real read on in-band rate at
+scale, run `scripts/test_headline_v18.py` (see Evaluation / Testing above) on
+the GPU box — it generates each val article once per band and reports in-band
+rate, artifact rate, and own-band ROUGE, rather than the single fixed-band
+score `test_headline.py` gives.
 
 ## Summarizer
 
