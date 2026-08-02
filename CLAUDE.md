@@ -26,6 +26,8 @@ python work/sinllama/prepare_sinllama_base.py
 python work/sinllama/scripts/train_grammar.py
 python work/sinllama/scripts/train_headline.py       # v17, fixed "4-7 words" prompt
 python work/sinllama/scripts/train_headline_v18.py   # v18, length-conditioned (see Headline section)
+python work/sinllama/scripts/clean_headline_dataset.py  # run once before v19: strips scraper tags from references
+python work/sinllama/scripts/train_headline_v19.py   # v19, length-conditioned + artifact-cleaned data
 python work/sinllama/scripts/train_style.py
 python work/sinllama/scripts/train_summarizer.py
 ```
@@ -35,6 +37,7 @@ python work/sinllama/scripts/train_summarizer.py
 python work/sinllama/scripts/test_grammar.py
 python work/sinllama/scripts/test_headline.py         # v17 only: fixed 4-7 word band, not length-aware
 python work/sinllama/scripts/test_headline_v18.py     # v18: per-band in-band rate + artifact rate + own-band ROUGE
+python work/sinllama/scripts/test_headline_v19.py     # v19: same, against the artifact-cleaned adapter
 python work/sinllama/scripts/test_style.py
 python summarizer/abstractive/6_test_summarizer.py   # latest (v06, length-conditioned); {2,3,4,5}_test_summarizer.py for earlier adapters
 ```
@@ -158,14 +161,37 @@ with a corrective hint (2 rounds), then anything still over the ceiling is
 trimmed to it.
 
 **v18 is trained and live** (auto-selected by `find_latest_adapters()`, no
-config change needed). A 9-sample smoke test against the live server (3
-articles x 3 bands, identical prompts on both adapters) showed v18 landing
-8/9 in-band vs. v17's 6/9, with the long band moving from 2/3 to 3/3 and fewer
-trailing scraper artifacts (1/9 vs. 2/9). For a real read on in-band rate at
-scale, run `scripts/test_headline_v18.py` (see Evaluation / Testing above) on
-the GPU box — it generates each val article once per band and reports in-band
-rate, artifact rate, and own-band ROUGE, rather than the single fixed-band
-score `test_headline.py` gives.
+config change needed). The real read on it: `scripts/test_headline_v18.py` run
+at N=300 articles x 3 bands (900 generations total) measured:
+
+| band   | in-band       | artifact rate |
+|--------|---------------|---------------|
+| short  | 266/300 88.7% | 1/300   0.3%  |
+| medium | 228/300 76.0% | 33/300  11.0% |
+| long   | 234/300 78.0% | 67/300  22.3% |
+| **all**| 728/900 80.9% | 101/900 11.2% |
+
+Length conditioning works — 81% in-band on bands the model had zero training
+signal for before v18 is a real result. But artifact rate scales with band
+length: nearly 1 in 4 long headlines carries a trailing scraper tag. Root
+cause is the training data, not generation — a meaningful share of the 48K
+references still carry their original Hiru/ITN scrape tags
+(`(වීඩියෝ)` / `VIDEO` / `PHOTOS` / `Interview`), those tags are extra words,
+so tagged references cluster into exactly the medium/long buckets v18 was
+asked to fill.
+
+**v19 fixes the data, not the model.** `scripts/clean_headline_dataset.py`
+strips trailing artifact tags from every reference headline (regex-based,
+anchored to the end of the string so mid-sentence mentions are untouched),
+writing `headline_dataset_48k_balanced_{train,val}_clean.jsonl`. Word bands
+are recomputed from the cleaned text, so a headline that shrinks from "long"
+to "medium" once its tag is gone lands in the band it actually belongs to.
+`train_headline_v19.py` is byte-identical to v18 except it points at the
+cleaned files — data cleanliness is the only variable. Run
+`clean_headline_dataset.py` once before training v19, then
+`test_headline_v19.py` after, to confirm artifact rate drops without in-band
+rate regressing (if it regresses, the cleaning step over-stripped real
+content, not just tags).
 
 ## Summarizer
 
