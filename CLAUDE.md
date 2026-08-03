@@ -193,6 +193,22 @@ cleaned files — data cleanliness is the only variable. Run
 rate regressing (if it regresses, the cleaning step over-stripped real
 content, not just tags).
 
+**v19 measured (N=300, run against the cleaned val set):**
+
+| band   | in-band (v18 → v19)   | artifact (v18 → v19) |
+|--------|------------------------|------------------------|
+| short  | 88.7% → 89.7%          | 0.3% → 0.0%            |
+| medium | 76.0% → 74.3%          | 11.0% → 0.3%           |
+| long   | 78.0% → 75.0%          | 22.3% → 3.0%           |
+| **all**| 80.9% → 79.7%          | 11.2% → 1.1%           |
+
+Artifact rate dropped ~10x (11.2% → 1.1%) with in-band rate essentially flat
+(within noise for N=300) — data cleaning fixed the leak without costing
+length conditioning. ROUGE-1/L also ticked up (0.124→0.134 / 0.121→0.130)
+since references are no longer mismatched by trailing junk. **v19 is the
+adapter to deploy** — `find_latest_adapters()` only rescans at startup, so
+the inference server needs a restart to pick it up over v18.
+
 ## Summarizer
 
 `summarizer/` holds two things: an early mT5-base pipeline (predates the SinLlama approach, now used as a comparison "teacher" model in `serve_sinai.py`) and the active SinLLaMA summarizer pipeline (`summarizer/abstractive/`, adapters v02–v06), which trains the same `summarization_sinllama_v*` adapters served by `work/serve_sinai.py`. Despite the folder name, `summarizer/abstractive/` is not legacy — it's the current summarizer training+eval code. Dependencies are in `summarizer/requirements.txt`.
