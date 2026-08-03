@@ -26,6 +26,15 @@ class TaskSpec:
     temperature: float = 1.0
     top_p: float = 1.0
     min_new_tokens: int = 0
+    # Used only when a caller requests num_candidates > 1 on a task whose
+    # normal do_sample is False — the ensemble forces sampling on for just
+    # those extra candidates, at these values rather than `temperature`/
+    # `top_p` above (which were never tuned for sampling on this task at
+    # all, since the single-candidate path never uses them). A task that
+    # already samples (do_sample=True) uses its own temperature/top_p for
+    # the ensemble too — see run_generation().
+    ensemble_temperature: float = 0.3
+    ensemble_top_p: float = 0.9
     decode: Optional[Callable] = None  # (tokenizer, outputs, prompt_len) -> (text, output_tokens); None = gateway default
     # True when this task's max_new_tokens accepts a `length` kwarg. Most
     # tasks have a fixed (raw_text, prompt_token_len) signature and would
@@ -43,6 +52,8 @@ TASKS: dict[str, TaskSpec] = {
         prompt_builder=grammar.prompt_grammar,
         max_new_tokens=grammar.max_new_tokens,
         repetition_penalty=grammar.REPETITION_PENALTY,
+        ensemble_temperature=grammar.ENSEMBLE_TEMPERATURE,
+        ensemble_top_p=grammar.ENSEMBLE_TOP_P,
     ),
     "headline": TaskSpec(
         name="headline",

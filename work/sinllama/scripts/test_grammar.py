@@ -32,17 +32,69 @@ ADAPTERS_DIR  = os.path.join(BASE_DIR, "models/adapters")
 MAX_SEQ_LENGTH = 512
 MAX_NEW_TOKENS = 256
 
-# Kept identical to train_grammar.py's INSTRUCTION_TEXT and used for EVERY
-# example regardless of stage. Training never reads the per-row "instruction"
-# field in the jsonl files (it builds this same fixed string for every row,
-# sentence or paragraph alike) — using anything else here would test the
-# model on a prompt distribution it never actually saw during training.
-INSTRUCTION_TEXT = (
+# ── Prompt variant under test ──
+# "english" — byte-for-byte identical to train_grammar.py's INSTRUCTION_TEXT
+#             and to tasks/grammar.py's prompt_grammar() as of the fix that
+#             aligned production to training. This is what the adapter was
+#             actually trained on; scores here are the real ceiling.
+# "sinhala" — the prompt tasks/grammar.py sent to production BEFORE that
+#             fix: a different persona, different scope (spelling +
+#             punctuation, never mentioned in training), and missing the
+#             "return EXACTLY unchanged" restraint line entirely. Off-
+#             distribution relative to training. Kept here so the accuracy
+#             cost of that mismatch can be measured directly against the
+#             same test sets, instead of argued about.
+# Change this one line to switch what every run below tests.
+PROMPT_VARIANT = "english"  # "english" | "sinhala"
+
+# Training's fixed instruction — see train_grammar.py's INSTRUCTION_TEXT.
+# Training never reads the per-row "instruction" field in the jsonl files
+# (it builds this same fixed string for every row, sentence or paragraph
+# alike) — using anything else here would test the model on a prompt
+# distribution it never actually saw during training.
+ENGLISH_INSTRUCTION_TEXT = (
     "Correct the grammar of the Sinhala sentence. "
     "ONLY fix errors. "
     "If the sentence is already correct, return it EXACTLY unchanged — "
     "do not rephrase, reorder, or change tense."
 )
+
+# The pre-fix production instruction — copied verbatim from tasks/grammar.py
+# as it stood before the alignment fix (see git history on that file for the
+# exact commit). Reproduced here, not imported, so this file keeps working
+# even after that module changes further — this is a frozen snapshot of what
+# production actually sent, on purpose.
+SINHALA_INSTRUCTION_TEXT = (
+    "ඔබ සිංහල භාෂා විශේෂඥයෙකි.\n"
+    "පහත සිංහල පාඨයේ ඇති වාකරණ දෝෂ, අක්ෂර වින්‍යාස දෝෂ සහ විරාම ලකුණු දෝෂ නිවැරදි කරන්න.\n"
+    "නිවැරදි කළ පාඨය පමණක් ලියන්න. වෙනත් කිසිදු පැහැදිලි කිරීමක් එකතු නොකරන්න."
+)
+
+
+def build_prompt(text: str) -> str:
+    """
+    Build the correction prompt for whichever PROMPT_VARIANT is selected.
+
+    The two variants differ in more than instruction text: english uses
+    training's "### Input:" label, sinhala used production's "Text:" label
+    (see tasks/grammar.py's pre-fix prompt_grammar()) — reproduced exactly
+    as each was, not normalized to share a label, since the whole point is
+    to measure what each one actually did.
+    """
+    if PROMPT_VARIANT == "sinhala":
+        return (
+            f"### Instruction:\n{SINHALA_INSTRUCTION_TEXT}\n\n"
+            f"Text:\n{text}\n\n"
+            "### Response:\n"
+        )
+    if PROMPT_VARIANT == "english":
+        return (
+            f"### Instruction:\n{ENGLISH_INSTRUCTION_TEXT}\n\n"
+            f"### Input:\n{text}\n\n"
+            "### Response:\n"
+        )
+    raise ValueError(f"Unknown PROMPT_VARIANT {PROMPT_VARIANT!r}; expected 'english' or 'sinhala'")
+
 
 # stage2 = single-sentence news examples, stage3 = 2-3 sentence paragraphs.
 TEST_SETS = {
@@ -165,11 +217,7 @@ class NewlineStoppingCriteria(StoppingCriteria):
 # INFERENCE FUNCTION
 # ─────────────────────────────────────────────
 def correct_sentence(model, tokenizer, sentence: str) -> str:
-    prompt = (
-        f"### Instruction:\n{INSTRUCTION_TEXT}\n\n"
-        f"### Input:\n{sentence}\n\n"
-        f"### Response:\n"
-    )
+    prompt = build_prompt(sentence)
 
     inputs     = tokenizer(prompt, return_tensors="pt").to("cuda")
     prompt_len = inputs["input_ids"].shape[1]
@@ -501,6 +549,7 @@ def main():
         print(f"🔹 Adapter : {adapter_path}")
         print(f"🔹 Data dir: {data_dir}")
         print(f"🔹 Stages  : {', '.join(stages)}")
+        print(f"🔹 Prompt  : {PROMPT_VARIANT}")
 
         print("🔹 Loading tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(SINLLAMA_BASE, local_files_only=True)
@@ -539,7 +588,10 @@ def main():
             os.makedirs(results_dir, exist_ok=True)
             adapter_name = os.path.basename(os.path.normpath(adapter_path))
             timestamp    = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            out_path = os.path.join(results_dir, f"{adapter_name}_{'-'.join(stages)}_{timestamp}.md")
+            out_path = os.path.join(
+                results_dir,
+                f"{adapter_name}_{PROMPT_VARIANT}_{'-'.join(stages)}_{timestamp}.md",
+            )
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(buffer.getvalue())
             print(f"📝 Transcript saved to {out_path}")
