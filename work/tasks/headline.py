@@ -13,6 +13,17 @@ see scripts/train_headline_v18.py) the band line is a nudge the model obeys
 only partly; the hard guarantee comes from word-count enforcement downstream
 in backend-api's headline_service.py. Nothing here defaults length on the
 caller's behalf — an omitted length keeps today's exact behavior.
+
+Scraper-artifact tags: article text can carry inline media markers
+("(Video)", "[Photo]") the model will copy into a generated headline. The
+production path (backend-api's prompts.py + headline_service.py) strips
+these both from the article before prompting and from the output before
+returning it (see app/core/text_cleaning.py there). This raw-text path
+(used by /compare and /tasks) is a dev/testing surface, not the production
+web app, so it does NOT get that cleanup — a headline generated here can
+still show a tag that the real product would have stripped. Don't take a
+/compare result as representative of what a user sees without accounting
+for that.
 """
 
 # Non-overlapping word bands: every word count maps to exactly one band, so

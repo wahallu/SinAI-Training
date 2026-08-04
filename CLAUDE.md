@@ -28,6 +28,8 @@ python work/sinllama/scripts/train_headline.py       # v17, fixed "4-7 words" pr
 python work/sinllama/scripts/train_headline_v18.py   # v18, length-conditioned (see Headline section)
 python work/sinllama/scripts/clean_headline_dataset.py  # run once before v19: strips scraper tags from references
 python work/sinllama/scripts/train_headline_v19.py   # v19, length-conditioned + artifact-cleaned data
+python work/sinllama/scripts/clean_headline_dataset_v20.py  # run once before v20: wider tags + cleans article INPUT too
+python work/sinllama/scripts/train_headline_v20.py   # v20, cleans both sides of the training pair (see Headline section)
 python work/sinllama/scripts/train_style.py
 python work/sinllama/scripts/train_summarizer.py
 ```
@@ -38,6 +40,7 @@ python work/sinllama/scripts/test_grammar.py
 python work/sinllama/scripts/test_headline.py         # v17 only: fixed 4-7 word band, not length-aware
 python work/sinllama/scripts/test_headline_v18.py     # v18: per-band in-band rate + artifact rate + own-band ROUGE
 python work/sinllama/scripts/test_headline_v19.py     # v19: same, against the artifact-cleaned adapter
+python work/sinllama/scripts/test_headline_v20.py     # v20: same, against the input+output-cleaned adapter
 python work/sinllama/scripts/test_style.py
 python summarizer/abstractive/6_test_summarizer.py   # latest (v06, length-conditioned); {2,3,4,5}_test_summarizer.py for earlier adapters
 ```
@@ -205,9 +208,53 @@ content, not just tags).
 Artifact rate dropped ~10x (11.2% → 1.1%) with in-band rate essentially flat
 (within noise for N=300) — data cleaning fixed the leak without costing
 length conditioning. ROUGE-1/L also ticked up (0.124→0.134 / 0.121→0.130)
-since references are no longer mismatched by trailing junk. **v19 is the
-adapter to deploy** — `find_latest_adapters()` only rescans at startup, so
-the inference server needs a restart to pick it up over v18.
+since references are no longer mismatched by trailing junk. v19 was deployed
+(`find_latest_adapters()` rescans on restart, highest version wins).
+
+**v19 wasn't zero, and live-server testing on fresh articles surfaced why.**
+1.1% overall wasn't the floor — reports came in of tags still showing up
+occasionally, e.g. `ඇපල් AppStore හි යළිත් වැඩ පෙන්වන්නේ Telegram ය! (වීඩියෝ)`,
+plus new variants v19's word list didn't cover: `[video]`, `[photo]`, and a
+bare `- photo` with no brackets at all. Two root causes:
+
+1. `clean_headline_dataset.py`'s separator class (`[\s\-–—:()!]*`) didn't
+   include square brackets, so `[video]`-style tags survived cleaning.
+2. It only cleaned the reference **headline** (`output`), never the article
+   (`input`). Scraped articles routinely carry an inline tag right next to
+   the sentence a headline gets built from — `...Telegram ය. (Video) මේ
+   පිළිබඳව...` — and the model can copy that straight into a generated
+   headline regardless of how clean the training label was, because the tag
+   is sitting in its *input* context, not something it memorized from a
+   label.
+
+**Two-track fix, shipped separately because they have very different
+lead times:**
+
+- **Immediate, retrain-independent (already deployed):** backend-api gained
+  `app/core/text_cleaning.py` with `strip_article_media_tags()` (strips
+  inline tags from the article before it's ever put in a prompt — wired into
+  `prompts.py`'s `prompt_headline()`) and `strip_headline_artifacts()`
+  (strips a trailing tag from every generated candidate before the
+  word-count/band logic runs — wired into `headline_service.py`, so it's the
+  actual hard guarantee that no tag reaches a caller, independent of adapter
+  version). This took effect the moment backend-api redeployed; no GPU-box
+  change needed.
+- **Root-cause, needs a retrain:** `scripts/clean_headline_dataset_v20.py`
+  widens the artifact word list/separator class (square brackets, bare
+  dash-prefixed words) **and** cleans the article `input` field too —
+  stripping inline tags anywhere in the body, not just a trailing tag on the
+  headline. `train_headline_v20.py` trains on the result
+  (`headline_dataset_48k_balanced_{train,val}_clean_v20.jsonl`); everything
+  else is unchanged from v19 so cleaning breadth is the only variable. Run
+  `test_headline_v20.py` after and compare against v19's measured baseline
+  (in its docstring) — artifact rate should drop further, in-band rate
+  should hold roughly steady.
+
+Note `work/tasks/headline.py`'s raw-text path (used by `/compare` and
+`/tasks`) does **not** get the backend-api cleanup — it's a dev/testing
+surface, not the production web app. A `/compare` result can show a tag the
+real product would have already stripped; don't take it as representative of
+what a user sees.
 
 ## Summarizer
 
