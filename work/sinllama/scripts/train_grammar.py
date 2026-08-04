@@ -4,10 +4,14 @@ from transformers import AutoTokenizer
 from peft import PeftModel
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
+import datetime
 import hashlib
+import io
 import json
 import os
 import re
+import subprocess
+import sys
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -19,6 +23,54 @@ SINLLAMA_BASE = "./models/SinLLaMA-merged-base"
 #    cleaned_v5 -> v19, cleaned_v7_full -> v20/v21.
 DATA_PATH     = "data/grammar_manual_dataset_stage12.jsonl"
 OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v23"
+
+# ─────────────────────────────────────────────
+# RUN CONTROL — the two switches worth having at the top
+#
+# SAVE_TRAINING_LOG
+#   Writes the whole run to Training_logs/<adapter>_<timestamp>.md, plus a
+#   per-epoch train/eval loss table and an overfitting verdict.
+#
+#   This exists because v23 could not be diagnosed after the fact. It changed
+#   two things against v22 at once — the v6 hand-built share fell 40.2% ->
+#   30.1%, and it took 33% more gradient updates (17,104 vs 12,856, i.e. 8.2
+#   vs 6.2 v7-equivalent epochs) — and with no loss curve recorded anywhere
+#   there was no way to tell dilution from over-training. The eval_loss curve
+#   answers that directly: rising while train_loss falls is over-training,
+#   both still falling is not.
+#
+# RUN_TEST_AFTER_TRAINING
+#   Runs test_grammar.py on the adapter that was just trained, so a finished
+#   run leaves both a training log and a scored transcript without anyone
+#   having to be at the keyboard. Set False to train only.
+# ─────────────────────────────────────────────
+SAVE_TRAINING_LOG        = True
+RUN_TEST_AFTER_TRAINING  = True
+TEST_STAGES              = "all"   # passed to test_grammar.py --stage
+TEST_NUM_CANDIDATES      = 1       # 1 = greedy, the comparable baseline
+
+
+class _Tee:
+    """Duplicate writes to several streams, so the run prints live AND is
+    captured. Same approach test_grammar.py already uses for transcripts."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+
+_LOG_BUFFER = None
+if SAVE_TRAINING_LOG:
+    _LOG_BUFFER = io.StringIO()
+    sys.stdout = _Tee(sys.__stdout__, _LOG_BUFFER)
+    print("🔹 Run started: " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 # ✅ v18 changes BOTH data and LoRA capacity at once (user-directed).
 #    NOTE: this deliberately breaks the one-variable-at-a-time rule the
@@ -394,3 +446,132 @@ print("💾 Saving model...")
 model.save_pretrained(OUTPUT_DIR)
 tokenizer.save_pretrained(OUTPUT_DIR)
 print(f"✅ Training complete! Model saved to {OUTPUT_DIR}")
+
+# ─────────────────────────────────────────────
+# LOSS CURVE + OVERFITTING VERDICT
+#
+# The single number that was missing when v23 regressed. eval_loss rising
+# while train_loss keeps falling is over-training; both still falling means
+# the regression came from the data, not the schedule.
+# ─────────────────────────────────────────────
+ADAPTER_NAME = os.path.basename(os.path.normpath(OUTPUT_DIR))
+
+
+def summarise_losses(history):
+    """Pair train and eval loss by step. Returns (rows, verdict_lines)."""
+    train_pts = [(h["step"], h["loss"]) for h in history if "loss" in h and "step" in h]
+    eval_pts = [(h["step"], h["eval_loss"]) for h in history if "eval_loss" in h]
+
+    rows = []
+    for step, ev in eval_pts:
+        # nearest logged train loss at or before this eval
+        before = [l for s, l in train_pts if s <= step]
+        tr = before[-1] if before else float("nan")
+        rows.append((step, step / max(steps_epoch, 1), tr, ev))
+
+    verdict = []
+    if len(eval_pts) < 2:
+        verdict.append("Not enough eval points to judge overfitting.")
+        return rows, verdict
+
+    losses = [e for _s, e in eval_pts]
+    best_i = min(range(len(losses)), key=lambda i: losses[i])
+    verdict.append("best eval_loss %.5f at eval #%d (step %d, epoch %.2f)"
+                   % (losses[best_i], best_i + 1, eval_pts[best_i][0],
+                      eval_pts[best_i][0] / max(steps_epoch, 1)))
+    if best_i == len(losses) - 1:
+        verdict.append("eval_loss was STILL FALLING at the end -> not over-trained; "
+                       "more steps may still help.")
+    else:
+        rise = losses[-1] - losses[best_i]
+        verdict.append("eval_loss ROSE %.5f after that point -> OVER-TRAINED past "
+                       "eval #%d. Cut TARGET_STEPS to about %d."
+                       % (rise, best_i + 1, eval_pts[best_i][0]))
+    return rows, verdict
+
+
+try:
+    _history = trainer.state.log_history
+except Exception:
+    _history = []
+
+_rows, _verdict = summarise_losses(_history)
+
+print("\n📉 Loss curve")
+print("   %-8s %-8s %-12s %-12s" % ("step", "epoch", "train_loss", "eval_loss"))
+for step, ep, tr, ev in _rows:
+    print("   %-8d %-8.2f %-12.5f %-12.5f" % (step, ep, tr, ev))
+print("\n🔎 Overfitting check")
+for line in _verdict:
+    print("   " + line)
+
+# ─────────────────────────────────────────────
+# WRITE THE TRAINING LOG
+# ─────────────────────────────────────────────
+if SAVE_TRAINING_LOG and _LOG_BUFFER is not None:
+    sys.stdout = sys.__stdout__
+    logs_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "..", "Training_logs"))
+    os.makedirs(logs_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = os.path.join(logs_dir, ADAPTER_NAME + "_" + stamp + ".md")
+
+    header = [
+        "# " + ADAPTER_NAME + " — training log",
+        "",
+        "- data       : " + os.path.basename(DATA_PATH),
+        "- fingerprint: " + DATA_FINGERPRINT,
+        "- rows       : " + str(len(samples)) + "  (" + str(changed) + " changed)",
+        "- max_steps  : " + str(max_steps) + "   (" + ("%.2f" % effective_epochs) + " epochs"
+        + (", pinned via TARGET_STEPS" if TARGET_STEPS else "") + ")",
+        "- steps/epoch: " + str(steps_epoch),
+        "",
+        "## loss curve",
+        "",
+        "| step | epoch | train_loss | eval_loss |",
+        "|---|---|---|---|",
+    ]
+    for step, ep, tr, ev in _rows:
+        header.append("| %d | %.2f | %.5f | %.5f |" % (step, ep, tr, ev))
+    header += ["", "## overfitting check", ""]
+    header += ["- " + v for v in _verdict]
+    header += ["", "## full run output", "", "```"]
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(header) + "\n")
+        f.write(_LOG_BUFFER.getvalue())
+        f.write("```\n")
+    print("📝 Training log saved to " + log_path)
+
+# ─────────────────────────────────────────────
+# EVALUATE
+#
+# Free the training model first: test_grammar.py loads its own copy of the
+# base in a subprocess, and holding both at once is an OOM on a 44GB A40.
+# ─────────────────────────────────────────────
+if RUN_TEST_AFTER_TRAINING:
+    print("\n🧪 Running test_grammar.py on " + ADAPTER_NAME + " ...")
+    try:
+        del trainer
+        del model
+    except Exception:
+        pass
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    test_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_grammar.py")
+    cmd = [sys.executable, test_script,
+           "--adapter", ADAPTER_NAME,
+           "--stage", TEST_STAGES,
+           "--num-candidates", str(TEST_NUM_CANDIDATES)]
+    print("   " + " ".join(cmd))
+    rc = subprocess.call(cmd)
+    if rc == 0:
+        print("✅ Evaluation finished — transcript is in Tested_results/")
+    else:
+        # Never let a failed eval look like a failed train: the adapter is
+        # already saved and is fine.
+        print("⚠️  test_grammar.py exited with code " + str(rc)
+              + ". The adapter is saved; re-run the test manually.")
