@@ -1,4 +1,5 @@
 import argparse
+import difflib
 import datetime
 import glob
 import io
@@ -96,11 +97,27 @@ def build_prompt(text: str) -> str:
     raise ValueError(f"Unknown PROMPT_VARIANT {PROMPT_VARIANT!r}; expected 'english' or 'sinhala'")
 
 
-# stage2 = single-sentence news examples, stage3 = 2-3 sentence paragraphs.
+# stage2 = single-sentence news examples
+# stage3 = 2-3 sentence paragraphs (NOTE: contains zero already-correct rows,
+#          so no-change accuracy / over-correction are undefined for it)
+# stage4 = paragraphs built from 4 real published news articles, including 10
+#          already-correct controls. Never used to drive training-data
+#          decisions, so it is a clean generalization read.
+# stage5 = 51 cases from 4 DIFFERENT real articles (verified absent from
+#          itn_merged.json), built 2026-07-28 as a spare so stage4 is no longer
+#          a single point of failure. 7 cases are errors the journalists
+#          actually published; the rest are injected on (wrong->right) pairs
+#          the training data never teaches, so it measures rule transfer rather
+#          than recall. Cases carry a category label in stage5_manifest.md.
+#          Built by scripts/build_stage5.py — rerun it after any test edit.
+#
+# Adding an entry here is now sufficient to make a stage run — main() and
+# print_comparison() both derive their lists from this dict.
 TEST_SETS = {
     "stage2": "grammar_test_stage2.jsonl",
     "stage3": "grammar_test_stage3.jsonl",
     "stage4": "grammar_test_stage4.jsonl",
+    "stage5": "grammar_test_stage5.jsonl",
 }
 
 
@@ -168,11 +185,19 @@ def parse_args():
              "or full path. Default: auto-detect the highest vN under models/adapters/.",
     )
     parser.add_argument(
-        "--stage", choices=["stage2", "stage3", "both"], default="both",
-        help="Which test set(s) to run. Default: both.",
+        "--stage", choices=list(TEST_SETS) + ["all", "both"], default="all",
+        help="Which test set(s) to run: a single stage name, 'all' (every stage "
+             "registered in TEST_SETS), or the legacy 'both' (stage2+stage3 only). "
+             "Default: all.",
     )
     parser.add_argument("--data-dir", default=None, help="Override the auto-detected test-data folder.")
     parser.add_argument("--limit", type=int, default=None, help="Only evaluate the first N examples per stage.")
+    parser.add_argument(
+        "--num-candidates", type=int, default=1, metavar="N",
+        help="Self-consistency: sample N candidates per sentence and keep the most "
+             "representative one. 1 (default) is the greedy path every previous "
+             "result was measured with, reproduced byte-for-byte.",
+    )
     parser.add_argument("--quiet", action="store_true", help="Only print stage summaries, not each example.")
     parser.add_argument("--no-save", action="store_true", help="Don't write a transcript to Tested_results/.")
     return parser.parse_args()
@@ -214,9 +239,65 @@ class NewlineStoppingCriteria(StoppingCriteria):
 
 
 # ─────────────────────────────────────────────
+# SELF-CONSISTENCY (ensemble) DECODING
+#
+# The single-candidate path below is greedy and is what every result from v13
+# to v23 was measured with. Passing --num-candidates N > 1 instead samples N
+# candidates in one generate() call and returns the most representative one.
+#
+# Why it is worth measuring: 24 of stage5's 34 failures are the model handing
+# the sentence back completely UNCHANGED. Greedy decoding commits to that "make
+# no edit" continuation every time. Sampling gives the correction a chance to
+# surface in at least one candidate, and consensus then keeps it only if it is
+# not a one-off — which is the shape of the actual failure, unlike more
+# training data, which two rounds (v8 -> v9) have now failed to move.
+#
+# Costs nothing but inference time: no retrain, works on any existing adapter.
+# The values match tasks/grammar.py's ENSEMBLE_TEMPERATURE / ENSEMBLE_TOP_P so
+# a good result here transfers straight to production via the
+# `grammar.ensemble_size` admin setting, which is already wired end to end and
+# has never been validated.
+# ─────────────────────────────────────────────
+# Overridden by --num-candidates in main(). 1 = the greedy path every
+# result from v13 to v23 was measured with.
+NUM_CANDIDATES = 1
+
+ENSEMBLE_TEMPERATURE = 0.3
+ENSEMBLE_TOP_P = 0.9
+
+
+def pick_consensus(candidates: list) -> str:
+    """
+    The candidate most representative of the set — highest average similarity
+    to the others.
+
+    Not a token-level majority vote: free-text corrections of different lengths
+    do not align cleanly enough across candidates for that. Ties resolve to the
+    earliest candidate, so this stays deterministic for a fixed input list.
+    Mirrors _pick_consensus() in the backend's grammar_service.py, so the eval
+    measures what production would actually do.
+    """
+    cleaned = [c for c in candidates if c]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+
+    best_index, best_score = 0, -1.0
+    for i, candidate in enumerate(cleaned):
+        total = sum(
+            difflib.SequenceMatcher(None, candidate, other).ratio()
+            for j, other in enumerate(cleaned) if j != i
+        )
+        if total > best_score:
+            best_score, best_index = total, i
+    return cleaned[best_index]
+
+
+# ─────────────────────────────────────────────
 # INFERENCE FUNCTION
 # ─────────────────────────────────────────────
-def correct_sentence(model, tokenizer, sentence: str) -> str:
+def correct_sentence(model, tokenizer, sentence: str, num_candidates: int = 1) -> str:
     prompt = build_prompt(sentence)
 
     inputs     = tokenizer(prompt, return_tensors="pt").to("cuda")
@@ -226,25 +307,34 @@ def correct_sentence(model, tokenizer, sentence: str) -> str:
         NewlineStoppingCriteria(tokenizer, prompt_len)
     ])
 
+    # num_candidates == 1 reproduces the greedy path byte-for-byte — same
+    # kwargs, same result — so every score recorded before this flag existed
+    # stays directly comparable.
+    ensemble = num_candidates > 1
+    gen_kwargs = dict(
+        max_new_tokens     = MAX_NEW_TOKENS,
+        do_sample          = ensemble,
+        temperature        = ENSEMBLE_TEMPERATURE if ensemble else 1.0,
+        repetition_penalty = 1.0,   # disabled — task requires reproducing input tokens
+        eos_token_id       = tokenizer.eos_token_id,
+        pad_token_id       = tokenizer.eos_token_id,
+        stopping_criteria  = stopping_criteria,
+        use_cache          = True,
+    )
+    if ensemble:
+        gen_kwargs["top_p"] = ENSEMBLE_TOP_P
+        gen_kwargs["num_return_sequences"] = num_candidates
+
     with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens     = MAX_NEW_TOKENS,
-            do_sample          = False,
-            temperature        = 1.0,
-            repetition_penalty = 1.0,   # disabled — task requires reproducing input tokens
-            eos_token_id       = tokenizer.eos_token_id,
-            pad_token_id       = tokenizer.eos_token_id,
-            stopping_criteria  = stopping_criteria,
-            use_cache          = True,
-        )
+        outputs = model.generate(**inputs, **gen_kwargs)
 
-    # Decode ONLY the newly generated tokens, not the full prompt
-    new_tokens = outputs[0][prompt_len:]
-    result     = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    def decode(row):
+        # Decode ONLY the newly generated tokens, not the full prompt
+        text = tokenizer.decode(row[prompt_len:], skip_special_tokens=True)
+        # Take first line only, strip whitespace
+        return text.strip().split("\n")[0].strip()
 
-    # Take first line only, strip whitespace
-    result = result.strip().split("\n")[0].strip()
+    result = pick_consensus([decode(row) for row in outputs]) if ensemble else decode(outputs[0])
 
     # Safety: if output is empty or garbage, return input unchanged
     if not result or len(result) < 2:
@@ -396,7 +486,7 @@ def evaluate_stage(model, tokenizer, stage_name, test_data, limit=None, quiet=Fa
     agg_tok_p = agg_tok_r = agg_tok_f1 = 0.0
 
     for inp, expected in test_data:
-        pred         = correct_sentence(model, tokenizer, inp)
+        pred         = correct_sentence(model, tokenizer, inp, num_candidates=NUM_CANDIDATES)
         is_correct   = (pred.strip() == expected.strip())
         needs_change = (inp.strip() != expected.strip())
 
@@ -432,18 +522,25 @@ def evaluate_stage(model, tokenizer, stage_name, test_data, limit=None, quiet=Fa
             print(f"   EXPECTED: {expected}")
             print(f"   ROUGE-L={r['rougeL']:.3f}  Char-F1={cf:.3f}  GLEU={g:.3f}")
 
-    overall_acc  = correct_count    / n             * 100
-    change_acc   = change_correct   / change_total  * 100 if change_total  else 0.0
-    nochange_acc = nochange_correct / nochange_total * 100 if nochange_total else 0.0
-    over_rate    = overcorrection_count / nochange_total * 100 if nochange_total else 0.0
+    # None (not 0.0) when a stage has no rows of that kind at all. stage3 has zero
+    # already-correct paragraphs, so reporting "0.0%" made an undefined metric look
+    # like a total failure and tripped the low-accuracy warning below every run.
+    overall_acc  = correct_count / n * 100
+    change_acc   = change_correct   / change_total   * 100 if change_total   else None
+    nochange_acc = nochange_correct / nochange_total * 100 if nochange_total else None
+    over_rate    = overcorrection_count / nochange_total * 100 if nochange_total else None
+
+    def pct(v):
+        return "n/a" if v is None else f"{v:.1f}%"
 
     print("\n" + "-" * 60)
     print(f"EXACT-MATCH RESULTS — {stage_name}")
     print("-" * 60)
     print(f"  Overall accuracy      : {correct_count}/{n}  →  {overall_acc:.1f}%")
-    print(f"  Change-needed accuracy: {change_correct}/{change_total}  →  {change_acc:.1f}%")
-    print(f"  No-change accuracy    : {nochange_correct}/{nochange_total}  →  {nochange_acc:.1f}%")
-    print(f"  Over-correction rate  : {overcorrection_count}/{nochange_total}  →  {over_rate:.1f}%  (changed correct sentences)")
+    print(f"  Change-needed accuracy: {change_correct}/{change_total}  →  {pct(change_acc)}")
+    print(f"  No-change accuracy    : {nochange_correct}/{nochange_total}  →  {pct(nochange_acc)}"
+          + ("   (no already-correct rows in this stage)" if nochange_total == 0 else ""))
+    print(f"  Over-correction rate  : {overcorrection_count}/{nochange_total}  →  {pct(over_rate)}  (changed correct sentences)")
 
     print(f"\nCONTINUOUS METRICS — {stage_name}  (avg over all samples)")
     print("-" * 60)
@@ -456,12 +553,16 @@ def evaluate_stage(model, tokenizer, stage_name, test_data, limit=None, quiet=Fa
     print(f"  Token Recall        : {agg_tok_r/n:.4f}")
     print(f"  Token F1            : {agg_tok_f1/n:.4f}")
 
-    if nochange_acc < 50:
+    # Guarded on None so an undefined metric never raises a false alarm.
+    if nochange_acc is not None and nochange_acc < 50:
         print("⚠️  No-change accuracy is low. Add more 'correct as-is' training examples.")
-    if change_acc < 50:
+    if change_acc is not None and change_acc < 50:
         print("⚠️  Change accuracy is low. Check dataset quality and max_new_tokens.")
-    if over_rate > 25:
+    if over_rate is not None and over_rate > 25:
         print(f"⚠️  Over-correction too high ({over_rate:.1f}%). Model is changing correct text.")
+    if nochange_total == 0:
+        print("ℹ️  This stage has no already-correct rows, so no-change accuracy and "
+              "over-correction are unmeasurable here. stage4 covers that case.")
     if (agg_rougeL / n) < 0.80:
         print("⚠️  ROUGE-L < 0.80 — model is making major token-level errors.")
     if (agg_char_f1 / n) < 0.85:
@@ -485,8 +586,8 @@ def evaluate_stage(model, tokenizer, stage_name, test_data, limit=None, quiet=Fa
 
 
 def print_comparison(results):
-    order  = ["stage2", "stage3"]
-    stages = [s for s in order if s in results]
+    # Order follows TEST_SETS (not a hardcoded list), so new stages appear here too.
+    stages = [s for s in TEST_SETS if s in results]
     if len(stages) < 2:
         return
 
@@ -510,7 +611,12 @@ def print_comparison(results):
         line = f"  {label:<22}"
         for s in stages:
             v = results[s][key]
-            line += f"{v:>13.1f}%" if unit == "%" else f"{v:>14.4f}"
+            if v is None:                       # metric undefined for this stage
+                line += f"{'n/a':>14}"
+            elif unit == "%":
+                line += f"{v:>13.1f}%"
+            else:
+                line += f"{v:>14.4f}"
         print(line)
     print("=" * 60)
 
@@ -534,11 +640,36 @@ def print_metric_guide():
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────
 def main():
-    args   = parse_args()
-    stages = ["stage2", "stage3"] if args.stage == "both" else [args.stage]
+    global NUM_CANDIDATES
+    args = parse_args()
+    NUM_CANDIDATES = max(1, args.num_candidates)
+
+    # Derive the run list from TEST_SETS. This used to be hardcoded as
+    # ["stage2", "stage3"], which meant registering a new stage in TEST_SETS
+    # was silently not enough to make it run — stage4 was added and never
+    # evaluated. Anything added to TEST_SETS is now picked up automatically.
+    if args.stage == "all":
+        stages = list(TEST_SETS)
+    elif args.stage == "both":
+        stages = ["stage2", "stage3"]   # legacy alias, kept so old commands behave the same
+    else:
+        stages = [args.stage]
 
     data_dir     = resolve_data_dir(args.data_dir)
     adapter_path = resolve_adapter(args.adapter)
+
+    # Fail before the (slow) base-model load rather than part-way through a run.
+    missing = [
+        (s, os.path.join(data_dir, TEST_SETS[s]))
+        for s in stages
+        if not os.path.exists(os.path.join(data_dir, TEST_SETS[s]))
+    ]
+    if missing:
+        lines = "\n".join(f"    {s}: {p}" for s, p in missing)
+        raise SystemExit(
+            f"✖ Missing test-set file(s) for the requested stage(s):\n{lines}\n"
+            f"  Copy them into {data_dir}, or pass --stage to select only the ones present."
+        )
 
     buffer = None
     if not args.no_save:
@@ -550,6 +681,16 @@ def main():
         print(f"🔹 Data dir: {data_dir}")
         print(f"🔹 Stages  : {', '.join(stages)}")
         print(f"🔹 Prompt  : {PROMPT_VARIANT}")
+        # Built before the f-string, not inside it: a multi-line expression
+        # inside an f-string is Python 3.12+ (PEP 701) and this box runs 3.11.
+        if NUM_CANDIDATES == 1:
+            decoding = "greedy"
+        else:
+            decoding = (
+                "self-consistency x%d (temp %s, top_p %s)"
+                % (NUM_CANDIDATES, ENSEMBLE_TEMPERATURE, ENSEMBLE_TOP_P)
+            )
+        print(f"🔹 Decoding: {decoding}")
 
         print("🔹 Loading tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(SINLLAMA_BASE, local_files_only=True)
@@ -588,9 +729,13 @@ def main():
             os.makedirs(results_dir, exist_ok=True)
             adapter_name = os.path.basename(os.path.normpath(adapter_path))
             timestamp    = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            # Decoding mode goes in the name so a self-consistency run can
+            # never be mistaken for a greedy one when comparing transcripts.
+            sc_tag = "" if NUM_CANDIDATES == 1 else "_sc%d" % NUM_CANDIDATES
+            stage_tag = "-".join(stages)
             out_path = os.path.join(
                 results_dir,
-                f"{adapter_name}_{PROMPT_VARIANT}_{'-'.join(stages)}_{timestamp}.md",
+                f"{adapter_name}_{PROMPT_VARIANT}{sc_tag}_{stage_tag}_{timestamp}.md",
             )
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(buffer.getvalue())

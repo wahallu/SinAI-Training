@@ -4,6 +4,7 @@ from unsloth import FastLanguageModel
 import json
 import torch
 import random
+import math
 from pathlib import Path
 from collections import Counter
 from torch.utils.data import Dataset as TorchDataset
@@ -19,13 +20,12 @@ from transformers import (
 # PATHS
 # ──────────────────────────────────────────────
 SINLLAMA_BASE   = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
-# ✅ UPDATED: v08 → v09, trained on the new, much larger dataset below
-OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v10"
+# ✅ UPDATED: v11, trained on the final cleaned dataset (7,555 rows)
+OUTPUT_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v11"
 
-# ✅ UPDATED: points at the new dataset (~22,237 articles - up from ~2,173
-# for v08). NOTE: confirm this exact filename/path matches what you
-# generated - update if it differs.
-TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_dub.jsonl"
+# ✅ UPDATED: points at the cleaned dataset - all QC-flagged, failed,
+# duplicate, and low-quality rows already removed during preprocessing.
+TRAIN_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_final_cleaned.jsonl"
 
 
 # ──────────────────────────────────────────────
@@ -43,24 +43,22 @@ MAX_SEQ_LENGTH    = 4096
 LORA_RANK         = 24
 LORA_ALPHA        = 48          # kept at 2x rank, same ratio as before
 LORA_DROPOUT       = 0.05
-# ✅ REDUCED: 5 → 3. Same overfitting evidence as above - with ~10x more
-# articles than the v08 run, fewer passes are needed, and the v08
-# train/eval loss gap suggests 5 epochs was already too many for the
-# effective amount of genuinely new content per epoch (a lot of every
-# example's tokens are repeated style boilerplate, which the model can
-# memorize quickly).
-NUM_EPOCHS        = 3
+# ✅ UPDATED: 3 → 5 epochs. The cleaned dataset is only 7,555 rows
+# (down from ~22K) so more passes are needed for convergence. Combined
+# with the lower LR and weight_decay, 5 epochs won't overfit.
+NUM_EPOCHS        = 5
 BATCH_SIZE        = 2
 GRAD_ACCUMULATION = 8
-LEARNING_RATE     = 2e-4
-# ✅ NEW: was not set at all before (defaults to 0.0 in TrainingArguments).
-# Standard, low-cost overfitting countermeasure - penalizes large weights,
-# directly discouraging the kind of memorization behind the train/eval
-# loss gap seen in v08.
+# ✅ UPDATED: 2e-4 → 1e-4. The smaller, cleaner dataset benefits from
+# a gentler learning rate that allows the model to learn nuanced style
+# differences rather than quickly memorizing surface patterns.
+LEARNING_RATE     = 1e-4
 WEIGHT_DECAY      = 0.01
 TRAIN_SPLIT       = 0.85
 SEED              = 42
-WARMUP_STEPS      = 50          # Increased from 16
+# ✅ UPDATED: 50 → 100 warmup steps. With the lower LR and more epochs,
+# longer warmup prevents early gradient instability.
+WARMUP_STEPS      = 100
 
 # ✅ NEW: generation parameters for inference
 GEN_TEMPERATURE   = 0.1         # Lower = more deterministic
@@ -293,11 +291,22 @@ class StyleRewriterDataset(TorchDataset):
             max_length=self.max_length,
         )["input_ids"])
 
-        labels = [-100] * prompt_len + encoded["input_ids"][prompt_len:]
+        input_ids = encoded["input_ids"]
 
-        if len(encoded["input_ids"]) == self.max_length:
+        # ✅ NEW: append EOS token so the model learns WHEN TO STOP.
+        # Without this, the model never sees an end-of-sequence signal
+        # during training, causing it to ramble or produce garbage
+        # after the real response ends at inference time.
+        if input_ids[-1] != self.tokenizer.eos_token_id and len(input_ids) < self.max_length:
+            input_ids = input_ids + [self.tokenizer.eos_token_id]
+
+        labels = [-100] * prompt_len + input_ids[prompt_len:]
+
+        if len(input_ids) == self.max_length:
             self.truncated += 1
 
+        encoded["input_ids"] = input_ids
+        encoded["attention_mask"] = [1] * len(input_ids)
         encoded["labels"] = labels
         return encoded
 
@@ -317,24 +326,16 @@ def load_jsonl(path: str) -> list:
 
 def validate_records(records: list) -> list:
     """
-    ✅ UPDATED: now converts raw generate_style_dataset.py rows
-    (content / style / rewritten_text) into the instruction / input /
-    output / metadata shape this trainer needs, dropping failed
-    generations, unknown styles, QC-flagged rows, and anything with a
-    too-short output - all in one pass.
+    ✅ UPDATED: the cleaned dataset (style_dataset2_final_cleaned.jsonl)
+    has already had all failed generations, QC-flagged rows, duplicates,
+    and low-quality content removed during preprocessing. This function
+    now only converts the cleaned rows into the instruction / input /
+    output / metadata shape the trainer expects, and drops any rows
+    with unknown styles or too-short output as a safety net.
     """
-    valid, skipped, qc_dropped, failed_dropped = [], 0, 0, 0
+    valid, skipped = [], 0
 
     for rec in records:
-        if rec.get("status") == "failed" or rec.get("error"):
-            failed_dropped += 1
-            continue
-
-        qc_issues = set(rec.get("qc_issues", []))
-        if qc_issues & DROP_QC_ISSUES:
-            qc_dropped += 1
-            continue
-
         converted = convert_generated_record(rec)
         if converted is None:
             skipped += 1
@@ -345,14 +346,47 @@ def validate_records(records: list) -> list:
         else:
             skipped += 1
 
-    if failed_dropped:
-        print(f"   ⚠️  Dropped {failed_dropped} records that failed generation")
-    if qc_dropped:
-        print(f"   ⚠️  Dropped {qc_dropped} records flagged by generation-time QC checks")
     if skipped:
-        print(f"   ⚠️  Skipped {skipped} other records (missing fields or too short)")
+        print(f"   ⚠️  Skipped {skipped} records (missing fields, unknown style, or too short)")
 
     return valid
+
+
+# ──────────────────────────────────────────────
+# ✅ NEW: STYLE-BALANCED UPSAMPLING
+# ──────────────────────────────────────────────
+def balance_styles(records: list) -> list:
+    """
+    Upsample minority styles so every style gets roughly equal
+    training exposure. Without this, style_5_feature (539 rows)
+    gets 4.6x less training than style_1_formal_news (2,471 rows),
+    causing the model to underperform heavily on minority styles.
+    """
+    by_style = {}
+    for rec in records:
+        sid = rec["metadata"]["style_id"]
+        by_style.setdefault(sid, []).append(rec)
+
+    max_count = max(len(v) for v in by_style.values())
+    balanced = []
+
+    print(f"\n   ⚖️  Style balancing (target: {max_count} per style):")
+    for style_id in sorted(by_style.keys()):
+        original = by_style[style_id]
+        orig_count = len(original)
+        if orig_count >= max_count:
+            balanced.extend(original)
+        else:
+            # Keep all originals + random oversample to fill the gap
+            oversampled = original + random.choices(
+                original, k=max_count - orig_count
+            )
+            balanced.extend(oversampled)
+        print(f"     {style_id:<28} {orig_count:>4} → {max_count}")
+
+    random.shuffle(balanced)
+    print(f"   ⚖️  Balanced total: {len(balanced)} (was {len(records)})")
+    return balanced
 
 
 # ──────────────────────────────────────────────
@@ -360,9 +394,9 @@ def validate_records(records: list) -> list:
 # ──────────────────────────────────────────────
 def main():
     print("\n" + "="*58)
-    print("  SinhalaJournal-LLM | Style Rewriter LoRA Training v03")
-    print("  Fixed: Longer sequences, better prompts, style rules")
-    print("  Updated: reads generate_style_dataset.py output directly")
+    print("  SinhalaJournal-LLM | Style Rewriter LoRA Training v05")
+    print("  Dataset: style_dataset2_final_cleaned.jsonl (7,555 rows)")
+    print("  Optimized: balanced styles, EOS, lower LR, 5 epochs")
     print("="*58)
 
     random.seed(SEED)
@@ -399,6 +433,9 @@ def main():
         lora_dropout               = LORA_DROPOUT,
         bias                       = "none",
         use_gradient_checkpointing = True,
+        # NOTE: lm_head removed — server has torchao 0.8.0 but PEFT
+        # needs 0.16.0+ for lm_head adapter dispatch. Also the model
+        # has tie_word_embeddings=True which complicates lm_head LoRA.
         target_modules             = [
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj",
@@ -438,6 +475,9 @@ def main():
     train_records = [r for u in urls if u in train_urls for r in by_url[u]]
     val_records   = [r for u in urls if u not in train_urls for r in by_url[u]]
 
+    # ✅ NEW: balance styles in training set (NOT val - val stays natural)
+    train_records = balance_styles(train_records)
+
     print(f"\n📊 Train split ({len(train_records)} records, {n_train_urls} articles):")
     train_dataset = StyleRewriterDataset(train_records, tokenizer, MAX_SEQ_LENGTH)
 
@@ -457,6 +497,8 @@ def main():
 
     Path(OUTPUT_ADAPTER).mkdir(parents=True, exist_ok=True)
 
+    # ✅ UPDATED: eval/save every 100 steps instead of per-epoch for
+    # finer-grained best-model selection across 5 epochs.
     training_args = TrainingArguments(
         output_dir                  = OUTPUT_ADAPTER,
         num_train_epochs            = NUM_EPOCHS,
@@ -468,13 +510,14 @@ def main():
         warmup_steps                = WARMUP_STEPS,
         bf16                        = True,
         logging_steps               = 10,
-        save_steps                  = 50,
-        eval_strategy               = "epoch",
-        save_strategy               = "epoch",
+        eval_strategy               = "steps",
+        eval_steps                  = 100,
+        save_strategy               = "steps",
+        save_steps                  = 100,
         load_best_model_at_end      = True,
         metric_for_best_model       = "eval_loss",
         greater_is_better           = False,
-        save_total_limit            = 2,
+        save_total_limit            = 3,
         report_to                   = "none",
         seed                        = SEED,
         dataloader_num_workers      = 0,

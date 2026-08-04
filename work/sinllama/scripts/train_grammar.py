@@ -4,7 +4,14 @@ from transformers import AutoTokenizer
 from peft import PeftModel
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
+import datetime
+import hashlib
+import io
 import json
+import os
+import re
+import subprocess
+import sys
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -12,10 +19,58 @@ import json
 # ✅ NEW: point directly to pre-merged SinLLaMA base
 #    Same as test script — no more 4-step chain
 SINLLAMA_BASE = "./models/SinLLaMA-merged-base"
-# ⚠️ UPDATE THIS to whatever you name cleaned_v5.jsonl on this box
-#    (previous rounds: cleaned_v3 -> ...stage6 -> v16, cleaned_v4 -> v17)
-DATA_PATH     = "data/grammar_manual_dataset_stage9.jsonl"
-OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v19"
+# ⚠️ UPDATE per round. Previous: cleaned_v3 -> v16, cleaned_v4 -> v17,
+#    cleaned_v5 -> v19, cleaned_v7_full -> v20/v21.
+DATA_PATH     = "data/grammar_manual_dataset_stage12.jsonl"
+OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v23"
+
+# ─────────────────────────────────────────────
+# RUN CONTROL — the two switches worth having at the top
+#
+# SAVE_TRAINING_LOG
+#   Writes the whole run to Training_logs/<adapter>_<timestamp>.md, plus a
+#   per-epoch train/eval loss table and an overfitting verdict.
+#
+#   This exists because v23 could not be diagnosed after the fact. It changed
+#   two things against v22 at once — the v6 hand-built share fell 40.2% ->
+#   30.1%, and it took 33% more gradient updates (17,104 vs 12,856, i.e. 8.2
+#   vs 6.2 v7-equivalent epochs) — and with no loss curve recorded anywhere
+#   there was no way to tell dilution from over-training. The eval_loss curve
+#   answers that directly: rising while train_loss falls is over-training,
+#   both still falling is not.
+#
+# RUN_TEST_AFTER_TRAINING
+#   Runs test_grammar.py on the adapter that was just trained, so a finished
+#   run leaves both a training log and a scored transcript without anyone
+#   having to be at the keyboard. Set False to train only.
+# ─────────────────────────────────────────────
+SAVE_TRAINING_LOG        = True
+RUN_TEST_AFTER_TRAINING  = True
+TEST_STAGES              = "all"   # passed to test_grammar.py --stage
+TEST_NUM_CANDIDATES      = 1       # 1 = greedy, the comparable baseline
+
+
+class _Tee:
+    """Duplicate writes to several streams, so the run prints live AND is
+    captured. Same approach test_grammar.py already uses for transcripts."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+
+_LOG_BUFFER = None
+if SAVE_TRAINING_LOG:
+    _LOG_BUFFER = io.StringIO()
+    sys.stdout = _Tee(sys.__stdout__, _LOG_BUFFER)
+    print("🔹 Run started: " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 # ✅ v18 changes BOTH data and LoRA capacity at once (user-directed).
 #    NOTE: this deliberately breaks the one-variable-at-a-time rule the
@@ -50,6 +105,53 @@ print(f"   Changed  : {changed}  ({changed/len(samples)*100:.1f}%)")
 print(f"   Unchanged: {unchanged} ({unchanged/len(samples)*100:.1f}%)")
 if changed / len(samples) > 0.65:
     print("   ⚠️  WARNING: >65% changed — consider adding more no-change examples.")
+
+# ─────────────────────────────────────────────
+# DATASET FINGERPRINT
+#
+# v20 and v21 produced byte-identical scores on all four stages. The likeliest
+# reason is simply that the v21 data delta was tiny (~0.5% of rows), but a
+# stale upload or a reused HF cache would look EXACTLY the same from the
+# outside — and we had no way to tell the two apart after the fact.
+#
+# So record what was actually trained on. The hash goes in the run log, and any
+# two runs sharing a hash are the same data by definition, no inference needed.
+# ─────────────────────────────────────────────
+_h = hashlib.sha256()
+for s in samples:
+    _h.update((s["input"] + "\x00" + s["output"] + "\x01").encode("utf-8"))
+DATA_FINGERPRINT = _h.hexdigest()[:16]
+
+# Canaries: specific corrections whose presence/absence distinguishes dataset
+# versions. Cheap to compute, and they fail loudly rather than silently.
+_ZWJ = "‍"
+_canaries = {
+    "teaches තරග→තරඟ":  sum(1 for s in samples
+                            if re.search(r"(?<![඀-෿])තරග", s["input"])
+                            and "තරඟ" in s["output"]),
+    "BAD gold තරග":     sum(1 for s in samples
+                            if re.search(r"(?<![඀-෿])තරග", s["output"])),
+    "conjunct ්‍ය/්‍ර": sum(1 for s in samples
+                            if ("්" + _ZWJ + "ය" in s["output"]
+                                and "්" + _ZWJ + "ය" not in s["input"])
+                            or ("්" + _ZWJ + "ර" in s["output"]
+                                and "්" + _ZWJ + "ර" not in s["input"])),
+    "SOV word-order":   sum(1 for s in samples
+                            if s["input"] != s["output"]
+                            and sorted(s["input"].rstrip(".").split())
+                             == sorted(s["output"].rstrip(".").split())),
+}
+print(f"   Fingerprint: {DATA_FINGERPRINT}   ({os.path.basename(DATA_PATH)})")
+for k, v in _canaries.items():
+    print(f"     {k:20s}: {v}")
+
+# cleaned_v8_full.jsonl should report 27064 rows / 64.9% changed and canaries
+# 315 / 10 / ~3932 / ~1059. A materially different reading means the file on
+# this box is not the one that was built — stop and re-upload.
+if _canaries["BAD gold තරග"] > 40:
+    print("   ⚠️  WARNING: තරග appears as CORRECT gold in "
+          f"{_canaries['BAD gold තරග']} rows. Expected <=10 — this looks like "
+          "the PRE-FIX file. Re-upload before training.")
 
 # ─────────────────────────────────────────────
 # LOAD TOKENIZER
@@ -185,9 +287,23 @@ def format_prompt(example):
 # LOAD + FORMAT DATASET
 # ─────────────────────────────────────────────
 print("🔹 Loading dataset...")
-dataset = load_dataset("json", data_files=DATA_PATH)
+# download_mode="force_redownload" makes load_dataset re-read the file instead of
+# reusing a cached Arrow build. The cache is keyed on the path, so editing a file
+# in place and keeping its name is precisely the case it can get wrong — and it
+# fails silently, which is the worst property for something feeding a 2.5h run.
+dataset = load_dataset("json", data_files=DATA_PATH,
+                       download_mode="force_redownload")
 dataset = dataset.map(format_prompt, remove_columns=dataset["train"].column_names)
 print(f"   Dataset size: {len(dataset['train'])} examples")
+
+# Cross-check the loaded dataset against the raw file read at the top. If these
+# disagree, load_dataset served something other than the file on disk.
+if len(dataset["train"]) != len(samples):
+    raise SystemExit(
+        f"❌ Dataset mismatch: raw file has {len(samples)} rows but "
+        f"load_dataset returned {len(dataset['train'])}. Cache is stale — "
+        f"run: rm -rf ~/.cache/huggingface/datasets"
+    )
 
 # ─────────────────────────────────────────────
 # v15 ADDITION — small held-out validation split
@@ -221,9 +337,36 @@ print(f"   Eval split   : {len(eval_data)} examples (held out, monitoring only)"
 #   basis actually used for gradient updates.
 # ─────────────────────────────────────────────
 import math
+
+# ── Training volume, in steps rather than epochs ──
+#
+# "Epochs" is the wrong unit to reason in here, because the dataset keeps
+# growing. What the model actually sees is gradient updates, and at a fixed
+# effective batch of 8 those scale with rows x epochs:
+#
+#   version  dataset      rows     epochs   max_steps   v7-equivalent epochs
+#   v20/v21  v7_full      17,532     5        10,410           5.0
+#   v22      v8_full      27,064     4        12,856           6.2   <- best
+#   v23      v9_full      36,006     4        17,104           8.2   <- regressed
+#
+# v23 changed TWO things at once against v22: the v6 hand-built share fell
+# 40.2% -> 30.1%, AND it took 33% more gradient updates. The comment this
+# replaces set 4 epochs precisely to avoid a "~7.7-epoch-equivalent run, the
+# first real overfitting risk in the series" — v23 landed at 8.2, past that
+# line, without anyone re-deriving it for the bigger file. So the regression
+# has two candidate causes and the results alone cannot separate them.
+#
+# TARGET_STEPS pins the volume directly so it stops drifting every time the
+# dataset grows. Set it to None to go back to a fixed epoch count.
+#
+#   None  -> EPOCHS * steps_per_epoch, the historical behaviour
+#   12856 -> exactly v22's update budget, whatever the dataset size
+TARGET_STEPS = None
+EPOCHS       = 4
 n_samples    = len(train_data)
 steps_epoch  = math.ceil(n_samples / 8)
-max_steps    = steps_epoch * 5
+max_steps    = TARGET_STEPS if TARGET_STEPS else steps_epoch * EPOCHS
+effective_epochs = max_steps / steps_epoch
 warmup_steps = round(max_steps * 0.1)
 save_steps   = round(max_steps / 2)
 # v18: eval once per epoch instead of twice per RUN. With ~5x the
@@ -236,6 +379,10 @@ save_steps   = round(max_steps / 2)
 eval_steps   = steps_epoch
 
 print(f"\n📊 Hyperparameters:")
+print(f"   data         = {DATA_PATH}")
+print(f"   fingerprint  = {DATA_FINGERPRINT}")
+print(f"   adapter      = {OUTPUT_DIR}")
+print(f"   epochs       = {effective_epochs:.2f}"      f"{'  (pinned via TARGET_STEPS)' if TARGET_STEPS else ''}")
 print(f"   samples      = {n_samples}")
 print(f"   steps/epoch  = {steps_epoch}")
 print(f"   max_steps    = {max_steps}")
@@ -299,3 +446,132 @@ print("💾 Saving model...")
 model.save_pretrained(OUTPUT_DIR)
 tokenizer.save_pretrained(OUTPUT_DIR)
 print(f"✅ Training complete! Model saved to {OUTPUT_DIR}")
+
+# ─────────────────────────────────────────────
+# LOSS CURVE + OVERFITTING VERDICT
+#
+# The single number that was missing when v23 regressed. eval_loss rising
+# while train_loss keeps falling is over-training; both still falling means
+# the regression came from the data, not the schedule.
+# ─────────────────────────────────────────────
+ADAPTER_NAME = os.path.basename(os.path.normpath(OUTPUT_DIR))
+
+
+def summarise_losses(history):
+    """Pair train and eval loss by step. Returns (rows, verdict_lines)."""
+    train_pts = [(h["step"], h["loss"]) for h in history if "loss" in h and "step" in h]
+    eval_pts = [(h["step"], h["eval_loss"]) for h in history if "eval_loss" in h]
+
+    rows = []
+    for step, ev in eval_pts:
+        # nearest logged train loss at or before this eval
+        before = [l for s, l in train_pts if s <= step]
+        tr = before[-1] if before else float("nan")
+        rows.append((step, step / max(steps_epoch, 1), tr, ev))
+
+    verdict = []
+    if len(eval_pts) < 2:
+        verdict.append("Not enough eval points to judge overfitting.")
+        return rows, verdict
+
+    losses = [e for _s, e in eval_pts]
+    best_i = min(range(len(losses)), key=lambda i: losses[i])
+    verdict.append("best eval_loss %.5f at eval #%d (step %d, epoch %.2f)"
+                   % (losses[best_i], best_i + 1, eval_pts[best_i][0],
+                      eval_pts[best_i][0] / max(steps_epoch, 1)))
+    if best_i == len(losses) - 1:
+        verdict.append("eval_loss was STILL FALLING at the end -> not over-trained; "
+                       "more steps may still help.")
+    else:
+        rise = losses[-1] - losses[best_i]
+        verdict.append("eval_loss ROSE %.5f after that point -> OVER-TRAINED past "
+                       "eval #%d. Cut TARGET_STEPS to about %d."
+                       % (rise, best_i + 1, eval_pts[best_i][0]))
+    return rows, verdict
+
+
+try:
+    _history = trainer.state.log_history
+except Exception:
+    _history = []
+
+_rows, _verdict = summarise_losses(_history)
+
+print("\n📉 Loss curve")
+print("   %-8s %-8s %-12s %-12s" % ("step", "epoch", "train_loss", "eval_loss"))
+for step, ep, tr, ev in _rows:
+    print("   %-8d %-8.2f %-12.5f %-12.5f" % (step, ep, tr, ev))
+print("\n🔎 Overfitting check")
+for line in _verdict:
+    print("   " + line)
+
+# ─────────────────────────────────────────────
+# WRITE THE TRAINING LOG
+# ─────────────────────────────────────────────
+if SAVE_TRAINING_LOG and _LOG_BUFFER is not None:
+    sys.stdout = sys.__stdout__
+    logs_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "..", "Training_logs"))
+    os.makedirs(logs_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = os.path.join(logs_dir, ADAPTER_NAME + "_" + stamp + ".md")
+
+    header = [
+        "# " + ADAPTER_NAME + " — training log",
+        "",
+        "- data       : " + os.path.basename(DATA_PATH),
+        "- fingerprint: " + DATA_FINGERPRINT,
+        "- rows       : " + str(len(samples)) + "  (" + str(changed) + " changed)",
+        "- max_steps  : " + str(max_steps) + "   (" + ("%.2f" % effective_epochs) + " epochs"
+        + (", pinned via TARGET_STEPS" if TARGET_STEPS else "") + ")",
+        "- steps/epoch: " + str(steps_epoch),
+        "",
+        "## loss curve",
+        "",
+        "| step | epoch | train_loss | eval_loss |",
+        "|---|---|---|---|",
+    ]
+    for step, ep, tr, ev in _rows:
+        header.append("| %d | %.2f | %.5f | %.5f |" % (step, ep, tr, ev))
+    header += ["", "## overfitting check", ""]
+    header += ["- " + v for v in _verdict]
+    header += ["", "## full run output", "", "```"]
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(header) + "\n")
+        f.write(_LOG_BUFFER.getvalue())
+        f.write("```\n")
+    print("📝 Training log saved to " + log_path)
+
+# ─────────────────────────────────────────────
+# EVALUATE
+#
+# Free the training model first: test_grammar.py loads its own copy of the
+# base in a subprocess, and holding both at once is an OOM on a 44GB A40.
+# ─────────────────────────────────────────────
+if RUN_TEST_AFTER_TRAINING:
+    print("\n🧪 Running test_grammar.py on " + ADAPTER_NAME + " ...")
+    try:
+        del trainer
+        del model
+    except Exception:
+        pass
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    test_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_grammar.py")
+    cmd = [sys.executable, test_script,
+           "--adapter", ADAPTER_NAME,
+           "--stage", TEST_STAGES,
+           "--num-candidates", str(TEST_NUM_CANDIDATES)]
+    print("   " + " ".join(cmd))
+    rc = subprocess.call(cmd)
+    if rc == 0:
+        print("✅ Evaluation finished — transcript is in Tested_results/")
+    else:
+        # Never let a failed eval look like a failed train: the adapter is
+        # already saved and is fine.
+        print("⚠️  test_grammar.py exited with code " + str(rc)
+              + ". The adapter is saved; re-run the test manually.")
