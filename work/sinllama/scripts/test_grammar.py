@@ -681,8 +681,16 @@ def main():
         print(f"🔹 Data dir: {data_dir}")
         print(f"🔹 Stages  : {', '.join(stages)}")
         print(f"🔹 Prompt  : {PROMPT_VARIANT}")
-        print(f"🔹 Decoding: {'greedy' if NUM_CANDIDATES == 1 else f'self-consistency x{NUM_CANDIDATES} '
-                            f'(temp {ENSEMBLE_TEMPERATURE}, top_p {ENSEMBLE_TOP_P})'}")
+        # Built before the f-string, not inside it: a multi-line expression
+        # inside an f-string is Python 3.12+ (PEP 701) and this box runs 3.11.
+        if NUM_CANDIDATES == 1:
+            decoding = "greedy"
+        else:
+            decoding = (
+                "self-consistency x%d (temp %s, top_p %s)"
+                % (NUM_CANDIDATES, ENSEMBLE_TEMPERATURE, ENSEMBLE_TOP_P)
+            )
+        print(f"🔹 Decoding: {decoding}")
 
         print("🔹 Loading tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(SINLLAMA_BASE, local_files_only=True)
@@ -721,13 +729,13 @@ def main():
             os.makedirs(results_dir, exist_ok=True)
             adapter_name = os.path.basename(os.path.normpath(adapter_path))
             timestamp    = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            # Decoding mode goes in the name so a self-consistency run can
+            # never be mistaken for a greedy one when comparing transcripts.
+            sc_tag = "" if NUM_CANDIDATES == 1 else "_sc%d" % NUM_CANDIDATES
+            stage_tag = "-".join(stages)
             out_path = os.path.join(
                 results_dir,
-                # Decoding mode goes in the name so a self-consistency run can
-                # never be mistaken for a greedy one when comparing transcripts.
-                f"{adapter_name}_{PROMPT_VARIANT}"
-                f"{'' if NUM_CANDIDATES == 1 else f'_sc{NUM_CANDIDATES}'}"
-                f"_{'-'.join(stages)}_{timestamp}.md",
+                f"{adapter_name}_{PROMPT_VARIANT}{sc_tag}_{stage_tag}_{timestamp}.md",
             )
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(buffer.getvalue())
