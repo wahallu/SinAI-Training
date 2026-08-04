@@ -17,8 +17,8 @@ import re
 SINLLAMA_BASE = "./models/SinLLaMA-merged-base"
 # ⚠️ UPDATE per round. Previous: cleaned_v3 -> v16, cleaned_v4 -> v17,
 #    cleaned_v5 -> v19, cleaned_v7_full -> v20/v21.
-DATA_PATH     = "data/grammar_manual_dataset_stage11.jsonl"
-OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v22"
+DATA_PATH     = "data/grammar_manual_dataset_stage12.jsonl"
+OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v23"
 
 # ✅ v18 changes BOTH data and LoRA capacity at once (user-directed).
 #    NOTE: this deliberately breaks the one-variable-at-a-time rule the
