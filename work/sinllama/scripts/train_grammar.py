@@ -286,18 +286,35 @@ print(f"   Eval split   : {len(eval_data)} examples (held out, monitoring only)"
 # ─────────────────────────────────────────────
 import math
 
-# v22: 4 epochs, down from 5.
-#   cleaned_v8_full is 27,064 rows vs cleaned_v7_full's 17,532 — 1.54x. At the
-#   same effective batch of 8 that makes each epoch 54% more gradient updates,
-#   so 4 epochs of v8 is ~6.2 epochs of v7 in steps. Keeping 5 would be a
-#   ~7.7-epoch-equivalent run and the first real overfitting risk in the series.
-#   v19's eval_loss was still falling at 5 epochs on the SMALLER set, which is
-#   why 5 was right then and is not now.
-#   WATCH: if eval_loss is still falling at epoch 4, 5 is worth one run.
+# ── Training volume, in steps rather than epochs ──
+#
+# "Epochs" is the wrong unit to reason in here, because the dataset keeps
+# growing. What the model actually sees is gradient updates, and at a fixed
+# effective batch of 8 those scale with rows x epochs:
+#
+#   version  dataset      rows     epochs   max_steps   v7-equivalent epochs
+#   v20/v21  v7_full      17,532     5        10,410           5.0
+#   v22      v8_full      27,064     4        12,856           6.2   <- best
+#   v23      v9_full      36,006     4        17,104           8.2   <- regressed
+#
+# v23 changed TWO things at once against v22: the v6 hand-built share fell
+# 40.2% -> 30.1%, AND it took 33% more gradient updates. The comment this
+# replaces set 4 epochs precisely to avoid a "~7.7-epoch-equivalent run, the
+# first real overfitting risk in the series" — v23 landed at 8.2, past that
+# line, without anyone re-deriving it for the bigger file. So the regression
+# has two candidate causes and the results alone cannot separate them.
+#
+# TARGET_STEPS pins the volume directly so it stops drifting every time the
+# dataset grows. Set it to None to go back to a fixed epoch count.
+#
+#   None  -> EPOCHS * steps_per_epoch, the historical behaviour
+#   12856 -> exactly v22's update budget, whatever the dataset size
+TARGET_STEPS = None
 EPOCHS       = 4
 n_samples    = len(train_data)
 steps_epoch  = math.ceil(n_samples / 8)
-max_steps    = steps_epoch * EPOCHS
+max_steps    = TARGET_STEPS if TARGET_STEPS else steps_epoch * EPOCHS
+effective_epochs = max_steps / steps_epoch
 warmup_steps = round(max_steps * 0.1)
 save_steps   = round(max_steps / 2)
 # v18: eval once per epoch instead of twice per RUN. With ~5x the
@@ -313,7 +330,7 @@ print(f"\n📊 Hyperparameters:")
 print(f"   data         = {DATA_PATH}")
 print(f"   fingerprint  = {DATA_FINGERPRINT}")
 print(f"   adapter      = {OUTPUT_DIR}")
-print(f"   epochs       = {EPOCHS}")
+print(f"   epochs       = {effective_epochs:.2f}"      f"{'  (pinned via TARGET_STEPS)' if TARGET_STEPS else ''}")
 print(f"   samples      = {n_samples}")
 print(f"   steps/epoch  = {steps_epoch}")
 print(f"   max_steps    = {max_steps}")

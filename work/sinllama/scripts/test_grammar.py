@@ -1,4 +1,5 @@
 import argparse
+import difflib
 import datetime
 import glob
 import io
@@ -191,6 +192,12 @@ def parse_args():
     )
     parser.add_argument("--data-dir", default=None, help="Override the auto-detected test-data folder.")
     parser.add_argument("--limit", type=int, default=None, help="Only evaluate the first N examples per stage.")
+    parser.add_argument(
+        "--num-candidates", type=int, default=1, metavar="N",
+        help="Self-consistency: sample N candidates per sentence and keep the most "
+             "representative one. 1 (default) is the greedy path every previous "
+             "result was measured with, reproduced byte-for-byte.",
+    )
     parser.add_argument("--quiet", action="store_true", help="Only print stage summaries, not each example.")
     parser.add_argument("--no-save", action="store_true", help="Don't write a transcript to Tested_results/.")
     return parser.parse_args()
@@ -232,9 +239,65 @@ class NewlineStoppingCriteria(StoppingCriteria):
 
 
 # ─────────────────────────────────────────────
+# SELF-CONSISTENCY (ensemble) DECODING
+#
+# The single-candidate path below is greedy and is what every result from v13
+# to v23 was measured with. Passing --num-candidates N > 1 instead samples N
+# candidates in one generate() call and returns the most representative one.
+#
+# Why it is worth measuring: 24 of stage5's 34 failures are the model handing
+# the sentence back completely UNCHANGED. Greedy decoding commits to that "make
+# no edit" continuation every time. Sampling gives the correction a chance to
+# surface in at least one candidate, and consensus then keeps it only if it is
+# not a one-off — which is the shape of the actual failure, unlike more
+# training data, which two rounds (v8 -> v9) have now failed to move.
+#
+# Costs nothing but inference time: no retrain, works on any existing adapter.
+# The values match tasks/grammar.py's ENSEMBLE_TEMPERATURE / ENSEMBLE_TOP_P so
+# a good result here transfers straight to production via the
+# `grammar.ensemble_size` admin setting, which is already wired end to end and
+# has never been validated.
+# ─────────────────────────────────────────────
+# Overridden by --num-candidates in main(). 1 = the greedy path every
+# result from v13 to v23 was measured with.
+NUM_CANDIDATES = 1
+
+ENSEMBLE_TEMPERATURE = 0.3
+ENSEMBLE_TOP_P = 0.9
+
+
+def pick_consensus(candidates: list) -> str:
+    """
+    The candidate most representative of the set — highest average similarity
+    to the others.
+
+    Not a token-level majority vote: free-text corrections of different lengths
+    do not align cleanly enough across candidates for that. Ties resolve to the
+    earliest candidate, so this stays deterministic for a fixed input list.
+    Mirrors _pick_consensus() in the backend's grammar_service.py, so the eval
+    measures what production would actually do.
+    """
+    cleaned = [c for c in candidates if c]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+
+    best_index, best_score = 0, -1.0
+    for i, candidate in enumerate(cleaned):
+        total = sum(
+            difflib.SequenceMatcher(None, candidate, other).ratio()
+            for j, other in enumerate(cleaned) if j != i
+        )
+        if total > best_score:
+            best_score, best_index = total, i
+    return cleaned[best_index]
+
+
+# ─────────────────────────────────────────────
 # INFERENCE FUNCTION
 # ─────────────────────────────────────────────
-def correct_sentence(model, tokenizer, sentence: str) -> str:
+def correct_sentence(model, tokenizer, sentence: str, num_candidates: int = 1) -> str:
     prompt = build_prompt(sentence)
 
     inputs     = tokenizer(prompt, return_tensors="pt").to("cuda")
@@ -244,25 +307,34 @@ def correct_sentence(model, tokenizer, sentence: str) -> str:
         NewlineStoppingCriteria(tokenizer, prompt_len)
     ])
 
+    # num_candidates == 1 reproduces the greedy path byte-for-byte — same
+    # kwargs, same result — so every score recorded before this flag existed
+    # stays directly comparable.
+    ensemble = num_candidates > 1
+    gen_kwargs = dict(
+        max_new_tokens     = MAX_NEW_TOKENS,
+        do_sample          = ensemble,
+        temperature        = ENSEMBLE_TEMPERATURE if ensemble else 1.0,
+        repetition_penalty = 1.0,   # disabled — task requires reproducing input tokens
+        eos_token_id       = tokenizer.eos_token_id,
+        pad_token_id       = tokenizer.eos_token_id,
+        stopping_criteria  = stopping_criteria,
+        use_cache          = True,
+    )
+    if ensemble:
+        gen_kwargs["top_p"] = ENSEMBLE_TOP_P
+        gen_kwargs["num_return_sequences"] = num_candidates
+
     with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens     = MAX_NEW_TOKENS,
-            do_sample          = False,
-            temperature        = 1.0,
-            repetition_penalty = 1.0,   # disabled — task requires reproducing input tokens
-            eos_token_id       = tokenizer.eos_token_id,
-            pad_token_id       = tokenizer.eos_token_id,
-            stopping_criteria  = stopping_criteria,
-            use_cache          = True,
-        )
+        outputs = model.generate(**inputs, **gen_kwargs)
 
-    # Decode ONLY the newly generated tokens, not the full prompt
-    new_tokens = outputs[0][prompt_len:]
-    result     = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    def decode(row):
+        # Decode ONLY the newly generated tokens, not the full prompt
+        text = tokenizer.decode(row[prompt_len:], skip_special_tokens=True)
+        # Take first line only, strip whitespace
+        return text.strip().split("\n")[0].strip()
 
-    # Take first line only, strip whitespace
-    result = result.strip().split("\n")[0].strip()
+    result = pick_consensus([decode(row) for row in outputs]) if ensemble else decode(outputs[0])
 
     # Safety: if output is empty or garbage, return input unchanged
     if not result or len(result) < 2:
@@ -414,7 +486,7 @@ def evaluate_stage(model, tokenizer, stage_name, test_data, limit=None, quiet=Fa
     agg_tok_p = agg_tok_r = agg_tok_f1 = 0.0
 
     for inp, expected in test_data:
-        pred         = correct_sentence(model, tokenizer, inp)
+        pred         = correct_sentence(model, tokenizer, inp, num_candidates=NUM_CANDIDATES)
         is_correct   = (pred.strip() == expected.strip())
         needs_change = (inp.strip() != expected.strip())
 
@@ -568,7 +640,9 @@ def print_metric_guide():
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────
 def main():
+    global NUM_CANDIDATES
     args = parse_args()
+    NUM_CANDIDATES = max(1, args.num_candidates)
 
     # Derive the run list from TEST_SETS. This used to be hardcoded as
     # ["stage2", "stage3"], which meant registering a new stage in TEST_SETS
@@ -607,6 +681,8 @@ def main():
         print(f"🔹 Data dir: {data_dir}")
         print(f"🔹 Stages  : {', '.join(stages)}")
         print(f"🔹 Prompt  : {PROMPT_VARIANT}")
+        print(f"🔹 Decoding: {'greedy' if NUM_CANDIDATES == 1 else f'self-consistency x{NUM_CANDIDATES} '
+                            f'(temp {ENSEMBLE_TEMPERATURE}, top_p {ENSEMBLE_TOP_P})'}")
 
         print("🔹 Loading tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(SINLLAMA_BASE, local_files_only=True)
@@ -647,7 +723,11 @@ def main():
             timestamp    = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             out_path = os.path.join(
                 results_dir,
-                f"{adapter_name}_{PROMPT_VARIANT}_{'-'.join(stages)}_{timestamp}.md",
+                # Decoding mode goes in the name so a self-consistency run can
+                # never be mistaken for a greedy one when comparing transcripts.
+                f"{adapter_name}_{PROMPT_VARIANT}"
+                f"{'' if NUM_CANDIDATES == 1 else f'_sc{NUM_CANDIDATES}'}"
+                f"_{'-'.join(stages)}_{timestamp}.md",
             )
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(buffer.getvalue())
