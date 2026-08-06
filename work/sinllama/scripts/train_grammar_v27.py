@@ -23,7 +23,7 @@ SINLLAMA_BASE = "./models/SinLLaMA-merged-base"
 #    cleaned_v5 -> v19, cleaned_v7_full -> v20/v21, cleaned_v9 (stage12) ->
 #    v23/v24, cleaned_v10 (stage13) -> v25/v26.
 DATA_PATH     = "data/grammar_manual_dataset_stage13.jsonl"
-OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v26"
+OUTPUT_DIR    = "./models/adapters/grammar_sinllama_v27"
 
 # ─────────────────────────────────────────────
 # RUN CONTROL — the two switches worth having at the top
@@ -241,15 +241,71 @@ model, _ = FastLanguageModel.from_pretrained(
 #   alpha/r = 1.0 scaling ratio the previous runs used — so this is a
 #   capacity change, not an effective-learning-rate change.
 # ─────────────────────────────────────────────
-print("🔹 Adding grammar LoRA adapter...")
+# ─────────────────────────────────────────────
+# v27 OVERRIDE: r = 32 -> 4.  THE ONLY DIFFERENCE FROM v26.
+#
+# WHY. v25 was measured on corrections the benchmark asks for, split by whether
+# that exact wrong->right word pair appears anywhere in the 36,006 training
+# rows:
+#
+#     taught pairs      103/113   91%
+#     untaught pairs     36/72    50%
+#
+# It does generalise — 50% on pairs it has never seen is not lookup, and forms
+# like පෝශණය -> පෝෂණය and ශාසනාරක්ශක -> ශාසනාරක්ෂක were produced with no
+# training signal for them at all. But the 91/50 split is the ceiling every
+# round since v22 has hit, and stage5 sits at 39% precisely because 38 of its
+# 46 corrections are untaught.
+#
+# Three rounds attacked this with data and all three failed: v23 added rows,
+# v24 cut the step budget, v25 fixed the answers. v25 is the only one that
+# moved the untaught column (42% -> 50%), which says data quality helps but
+# does not remove the ceiling.
+#
+# The hypothesis this run tests is that the ceiling is CAPACITY, not data. At
+# r=32 across attention+MLP the adapter carries ~84M trainable parameters
+# against ~12,187 distinct corrections — roughly 6,900 parameters per
+# correction. Memorising the lookup table is by far the cheapest way to drive
+# the loss down, so that is what gradient descent does, and v25's final
+# train_loss of 0.003 is what winning that way looks like. At r=4 it has ~10M
+# parameters, ~860 per correction: too few to store the table, so the only
+# route to a low loss is to compress the corrections into letter-level rules.
+#
+# WHAT TO LOOK FOR. Not overall accuracy — that may well fall, and a fall does
+# not refute the hypothesis. The measurement is the untaught column:
+#
+#     untaught rate RISES  -> the ceiling was capacity. Memorisation was
+#                             crowding out rule-learning. Sweep r = 8, 16.
+#     untaught rate FLAT/FALLS, taught also falls
+#                          -> r=4 is simply too small to learn the task.
+#                             Retry at r=8 before abandoning the idea.
+#     untaught FLAT, taught HOLDS
+#                          -> capacity was never the constraint. Stop tuning
+#                             the adapter; the limit is what the base model
+#                             knows about Sinhala orthography, and the next
+#                             lever is character-level or subword-regularised
+#                             training, not another LoRA config.
+#
+# Expect train_loss to end far higher than v25's 0.003. That is the point of
+# the run, not a fault in it.
+#
+# lora_alpha tracks r (4/4) to hold alpha/r = 1.0, the same scaling ratio every
+# previous run used — so this is a capacity change and not a disguised
+# learning-rate change. target_modules is left alone for the same reason: one
+# variable.
+#
+# COST: trainable params ~84M -> ~10M. Faster per step and lighter on VRAM
+# than v26, so no batch/seq changes are needed.
+# ─────────────────────────────────────────────
+print("🔹 Adding grammar LoRA adapter (v27: r=4, anti-memorisation probe)...")
 model = FastLanguageModel.get_peft_model(
     model,
-    r              = 32,
+    r              = 4,     # v27: was 32
     target_modules = [
         "q_proj", "k_proj", "v_proj", "o_proj",     # attention (as before)
         "gate_proj", "up_proj", "down_proj",        # v18: MLP — lexical/word-choice
     ],
-    lora_alpha     = 32,
+    lora_alpha     = 4,     # v27: tracks r, preserving alpha/r = 1.0
     lora_dropout   = 0.05,  # must stay 0.05 — see note above
     bias           = "none",
 )
