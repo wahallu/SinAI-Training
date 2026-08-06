@@ -256,6 +256,38 @@ surface, not the production web app. A `/compare` result can show a tag the
 real product would have already stripped; don't take it as representative of
 what a user sees.
 
+**v20 was trained and measured — not a clear win, not deployed.** N=300
+result:
+
+| band   | in-band (v19 → v20)   | artifact (v19 → v20) |
+|--------|------------------------|------------------------|
+| short  | 89.7% → 84.7% (↓)      | 0.0% → 0.3%            |
+| medium | 74.3% → 75.3%          | 0.3% → 1.0%            |
+| long   | 75.0% → 79.7% (↑)      | 3.0% → 2.3%            |
+| **all**| 79.7% → 79.9%          | 1.1% → **1.2%** (↑)    |
+
+Artifact rate did not drop — the opposite of what v20's article-input
+cleaning was meant to fix — and the short band regressed 5pp. Root cause of
+the flat artifact number: `test_headline_v20.py` evaluates against
+`headline_dataset_48k_balanced_val_clean_v20.jsonl`, the *already-cleaned*
+validation set, so the eval has nothing left in the article for the model to
+copy a tag from — it can't measure what v20's input-cleaning was actually
+built to test. The ~1-2% residual on both v19 and v20 here is the model
+occasionally producing a tag-like pattern from general newswriting-style
+exposure, not from copying a visible tag, and retraining on cleaner input
+doesn't touch that. The short-band regression is more likely N=300 sampling
+variance (`do_sample=True`) than a real effect.
+
+**Decision: v19 stays deployed.** v20 isn't a measured improvement and
+regressed the short band for no offsetting gain. If this gets revisited, the
+eval needs redoing against a validation set that still has real, dirty
+(uncleaned) article text — otherwise the comparison structurally can't see
+the effect being tested for. In the meantime, backend-api's
+`app/core/text_cleaning.py` (`strip_article_media_tags()` +
+`strip_headline_artifacts()`) is already deployed and is a hard guarantee
+independent of adapter version — that's what's actually keeping tags out of
+what users see today.
+
 ## Summarizer
 
 `summarizer/` holds two things: an early mT5-base pipeline (predates the SinLlama approach, now used as a comparison "teacher" model in `serve_sinai.py`) and the active SinLLaMA summarizer pipeline (`summarizer/abstractive/`, adapters v02–v06), which trains the same `summarization_sinllama_v*` adapters served by `work/serve_sinai.py`. Despite the folder name, `summarizer/abstractive/` is not legacy — it's the current summarizer training+eval code. Dependencies are in `summarizer/requirements.txt`.
