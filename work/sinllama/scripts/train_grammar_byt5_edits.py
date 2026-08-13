@@ -17,7 +17,12 @@ import platform
 import random
 from pathlib import Path
 
-from grammar_edit_script import apply_edit_script, correction_metrics, make_edit_script
+from grammar_edit_script import (
+    apply_edit_script,
+    correction_metrics,
+    make_edit_script,
+    sanitize_generated_token_ids,
+)
 from train_grammar_byt5 import load_rows, make_pair_disjoint_split
 
 
@@ -175,6 +180,9 @@ def main() -> None:
         prediction_ids = eval_prediction.predictions
         if isinstance(prediction_ids, tuple):
             prediction_ids = prediction_ids[0]
+        prediction_ids = sanitize_generated_token_ids(
+            prediction_ids, tokenizer.pad_token_id, len(tokenizer)
+        )
         raw_scripts = tokenizer.batch_decode(prediction_ids, skip_special_tokens=True)
         corrected, invalid, rejected, applied = [], 0, 0, 0
         for source, script, token_ids in zip(dev_sources, raw_scripts, prediction_ids):
@@ -271,6 +279,9 @@ def main() -> None:
     prediction_ids = development_output.predictions
     if isinstance(prediction_ids, tuple):
         prediction_ids = prediction_ids[0]
+    prediction_ids = sanitize_generated_token_ids(
+        prediction_ids, tokenizer.pad_token_id, len(tokenizer)
+    )
     raw_scripts = tokenizer.batch_decode(prediction_ids, skip_special_tokens=True)
     development_predictions_path = output_dir / "development_predictions.jsonl"
     with development_predictions_path.open("w", encoding="utf-8") as handle:

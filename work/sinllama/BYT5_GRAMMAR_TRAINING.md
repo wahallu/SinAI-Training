@@ -56,6 +56,13 @@ python scripts/test_grammar_edit_script.py
 
 All tests must pass before training.
 
+If an older copy fails after the training steps with
+`ValueError: chr() arg not in range(0x110000)`, update
+`grammar_edit_script.py`, `train_grammar_byt5_edits.py`, and
+`test_grammar_edit_script.py`. Transformers may pad generated evaluation arrays
+with `-100`; ByT5 cannot decode that value directly. The current scripts replace
+evaluation-only padding with the tokenizer pad ID and include regression tests.
+
 ## 4. Smoke-test ByT5-small v02
 
 ```bash

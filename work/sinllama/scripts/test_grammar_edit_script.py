@@ -4,7 +4,11 @@
 import json
 import unittest
 
-from grammar_edit_script import apply_edit_script, make_edit_script
+from grammar_edit_script import (
+    apply_edit_script,
+    make_edit_script,
+    sanitize_generated_token_ids,
+)
 
 
 class GrammarEditScriptTests(unittest.TestCase):
@@ -51,6 +55,15 @@ class GrammarEditScriptTests(unittest.TestCase):
         source, target = "කෙරුනි.", "කෙරුණි."
         result = apply_edit_script(source, make_edit_script(source, target), generation_finished=False)
         self.assertEqual((result.status, result.text), ("REJECTED", source))
+
+    def test_trainer_negative_padding_is_sanitized_for_byt5(self):
+        self.assertEqual(
+            sanitize_generated_token_ids([[5, 6, 1, -100], [5, 1, -100, -100]], 0, 384),
+            [[5, 6, 1, 0], [5, 1, 0, 0]],
+        )
+
+    def test_out_of_vocabulary_ids_are_also_sanitized(self):
+        self.assertEqual(sanitize_generated_token_ids([[5, 9999999]], 0, 384), [[5, 0]])
 
 
 if __name__ == "__main__":

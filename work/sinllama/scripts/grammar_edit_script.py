@@ -15,6 +15,7 @@ from __future__ import annotations
 import collections
 import difflib
 import json
+import operator
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -29,6 +30,32 @@ QUOTED_RE = re.compile(r"[\"'“”‘’«»][^\"'“”‘’«»]+[\"'“”�
 
 def normalize(text: str) -> str:
     return unicodedata.normalize("NFC", text).strip()
+
+
+def sanitize_generated_token_ids(prediction_ids, pad_token_id: int, vocab_size: int) -> list[list[int]]:
+    """Replace Trainer's -100 padding before ByT5 decoding.
+
+    Seq2SeqTrainer may right-pad generated batches with -100 when batches have
+    different generated lengths. SentencePiece tokenizers often tolerate this,
+    but ByT5 maps token IDs through ``chr`` and raises ValueError. Returning plain
+    lists also makes the behavior independent of NumPy/PyTorch scalar types.
+    """
+    values = prediction_ids.tolist() if hasattr(prediction_ids, "tolist") else prediction_ids
+    if not isinstance(values, (list, tuple)):
+        raise ValueError("generated_predictions_must_be_a_2d_sequence")
+    sanitized = []
+    for row in values:
+        if not isinstance(row, (list, tuple)):
+            raise ValueError("generated_predictions_must_be_a_2d_sequence")
+        clean_row = []
+        for value in row:
+            try:
+                token_id = operator.index(value)
+            except TypeError as exc:
+                raise ValueError("generated_predictions_contain_non_integer_ids") from exc
+            clean_row.append(token_id if 0 <= token_id < vocab_size else pad_token_id)
+        sanitized.append(clean_row)
+    return sanitized
 
 
 def make_edit_script(source: str, target: str) -> str:

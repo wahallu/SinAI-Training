@@ -278,3 +278,9 @@ decision are recorded at:
 
 The next GPU experiment is `scripts/train_grammar_byt5_edits.py`, not a rerun of
 the full-sentence trainer documented earlier in this record.
+
+The first v02 smoke attempt completed its 24 optimization steps but failed during
+generated-development decoding because Transformers padded prediction arrays with
+`-100`, which ByT5's byte tokenizer passed to `chr()`. This was a script
+compatibility failure, not a model result. The evaluator now converts invalid
+padding IDs to the tokenizer pad ID before decoding, with two regression tests.
