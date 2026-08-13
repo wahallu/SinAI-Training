@@ -10,6 +10,7 @@ from grammar_edit_script import (
     make_edit_script,
     make_replacement_script,
     sanitize_generated_token_ids,
+    validate_full_candidate,
 )
 
 
@@ -84,6 +85,33 @@ class GrammarEditScriptTests(unittest.TestCase):
         script = "REPLACE ||| අද ||| ඊයේ"
         result = apply_replacement_script(source, script)
         self.assertEqual((result.status, result.text), ("INVALID", source))
+
+    def test_full_candidate_keep_and_safe_correction(self):
+        source = "මෙය කෙරුනි."
+        kept = validate_full_candidate(source, source)
+        corrected = validate_full_candidate(source, "මෙය කෙරුණි.")
+        self.assertEqual((kept.status, kept.text), ("KEEP", source))
+        self.assertEqual((corrected.status, corrected.text), ("APPLIED", "මෙය කෙරුණි."))
+
+    def test_full_candidate_rejects_name_deletion_and_repetition(self):
+        source = "Mark Carney මහතා අද පැමිණියේය."
+        deleted = validate_full_candidate(source, "මහතා අද පැමිණියේය.")
+        repeated = validate_full_candidate(
+            "ඔහු අද පැමිණියේය.",
+            "ඔහු අද පැමිණියේය. ඔහු අද පැමිණියේය. ඔහු අද පැමිණියේය.",
+        )
+        self.assertEqual(deleted.status, "REJECTED")
+        self.assertIn("latin_span_mutation", deleted.reasons)
+        self.assertEqual(repeated.status, "REJECTED")
+
+    def test_full_candidate_rejects_empty_or_unfinished(self):
+        source = "මෙය කෙරුනි."
+        self.assertEqual(validate_full_candidate(source, "").status, "INVALID")
+        unfinished = validate_full_candidate(
+            source, "මෙය කෙරුණි.", generation_finished=False
+        )
+        self.assertEqual(unfinished.status, "REJECTED")
+        self.assertIn("generation_cap_or_missing_eos", unfinished.reasons)
 
 
 if __name__ == "__main__":

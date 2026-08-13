@@ -207,6 +207,55 @@ class ApplyResult:
     operation_count: int
 
 
+def validate_full_candidate(
+    source: str,
+    candidate: str,
+    *,
+    min_byte_length_ratio: float = 0.75,
+    max_byte_length_ratio: float = 1.25,
+    max_changed_fraction: float = 0.50,
+    generation_finished: bool = True,
+) -> ApplyResult:
+    """Validate a generated full-sentence correction or safely return the source."""
+    source, candidate = normalize(source), normalize(candidate)
+    if not candidate:
+        return ApplyResult(source, "INVALID", ("empty_candidate",), 0)
+    if candidate == source:
+        return ApplyResult(source, "KEEP", (), 0)
+
+    reasons = []
+    if not generation_finished:
+        reasons.append("generation_cap_or_missing_eos")
+    source_bytes = max(1, len(source.encode("utf-8")))
+    length_ratio = len(candidate.encode("utf-8")) / source_bytes
+    if not min_byte_length_ratio <= length_ratio <= max_byte_length_ratio:
+        reasons.append("byte_length_ratio")
+    matcher = difflib.SequenceMatcher(None, source, candidate, autojunk=False)
+    if 1.0 - matcher.ratio() > max_changed_fraction:
+        reasons.append("edit_coverage")
+    if _has_repetition_loop(candidate) and not _has_repetition_loop(source):
+        reasons.append("repetition_loop")
+    if _counter(NUMBER_RE, source) != _counter(NUMBER_RE, candidate):
+        reasons.append("number_mutation")
+    if _counter(LATIN_RE, source) != _counter(LATIN_RE, candidate):
+        reasons.append("latin_span_mutation")
+    if _counter(URL_RE, source) != _counter(URL_RE, candidate):
+        reasons.append("url_or_email_mutation")
+    if _counter(QUOTED_RE, source) != _counter(QUOTED_RE, candidate):
+        reasons.append("quoted_span_mutation")
+    if _format_controls(source) != _format_controls(candidate):
+        reasons.append("unicode_format_control_mutation")
+
+    operation_count = sum(
+        tag != "equal" for tag, *_ in matcher.get_opcodes()
+    )
+    if reasons:
+        return ApplyResult(
+            source, "REJECTED", tuple(sorted(set(reasons))), operation_count
+        )
+    return ApplyResult(candidate, "APPLIED", (), operation_count)
+
+
 def apply_edit_script(
     source: str,
     script: str,

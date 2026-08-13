@@ -366,3 +366,41 @@ development, and 44 bridge-dropped rows after safety/representation filtering,
 with zero shared edits. Continue that pilot only if invalid scripts fall below
 50%, at least one edit is safely applied, and generated edit F0.5 becomes nonzero.
 Otherwise stop v02 and move to an explicit detector plus span-corrector design.
+
+### ByT5-small v02b 5,000-row pilot result — 2026-08-13
+
+The final bounded learnability pilot completed but failed every predefined gate:
+
+| Item | Result |
+|---|---:|
+| Original deterministic sample | 5,000 |
+| Safety-compatible | 3,889 |
+| Replacement-compatible | 3,631 |
+| Train / development / bridge-dropped | 3,405 / 182 / 44 |
+| Shared train/development edits | 0 |
+| Optimizer steps / epochs | 213 / 1 |
+| Runtime | 424.8268 seconds |
+| Training loss | 1.91550 |
+| Development loss | 0.61592 |
+| Development exact | 35.16% |
+| Development clean preservation | 100.00% |
+| Development change exact | 0.00% |
+| Development edit F0.5 | 0.00% |
+| Invalid generated scripts | 100.00% |
+| Applied generated scripts | 0.00% |
+| Checkpoint | `models/grammar_byt5_small_v02b_pilot5k/checkpoint-213` |
+
+The 35.16% exact value is the clean share preserved by rejecting every generated
+output to `KEEP`; it is not correction capability. Under the declared rule
+(invalid below 50%, at least one applied script, nonzero F0.5), v02b is stopped.
+Do not run it on the full corpus, ByT5-base, or frozen Stages 2–5. Preserve its
+development predictions for failure evidence and move to an explicit detector
+plus marked-span corrector.
+
+Full raw inspection confirmed 182/182 `replacement_line_schema` failures. No
+output emitted either valid control token (`KEEP` or `REPLACE |||`). Outputs were
+Sinhala continuation fragments, repeated words/clauses, punctuation loops, or
+generation-cap truncations. This is not a borderline threshold failure and is
+not repairable by relaxing the parser. The v02 generative-script branch is
+terminated; additional epochs, the full dataset, Stage 7/8 substitution, or
+ByT5-base are not approved for this objective.

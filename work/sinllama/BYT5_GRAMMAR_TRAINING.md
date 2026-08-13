@@ -171,6 +171,11 @@ with zero shared edits. Stop the edit-script approach if the result still has
 50% or more invalid scripts, zero applied scripts, or zero edit F0.5. Do not use
 Stages 2–5 to make this decision.
 
+The recorded pilot returned 100% invalid scripts, zero applied scripts, and zero
+edit F0.5 after 213 updates. It therefore failed all gates. The commands below
+are retained only as an experimental record: do not run full v02b training,
+ByT5-base, or frozen Stage 2–5 evaluation for this checkpoint.
+
 ## 5. Train ByT5-small v02b
 
 **Paused:** retain this command for later; do not execute it yet.
