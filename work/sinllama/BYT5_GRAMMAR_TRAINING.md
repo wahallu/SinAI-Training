@@ -141,7 +141,39 @@ replacement-compatible, 349 train, 18 development, and two bridge-dropped rows,
 with zero shared edits. Inspect its generated-development output exactly as above,
 changing the directory to `grammar_byt5_small_v02b_smoke`.
 
+The recorded three-epoch v02b smoke run reached zero generated edit F0.5 and a
+100% invalid-script rate at every epoch despite lower development loss. Therefore
+the full v02b command below is paused. Do not run it until expected-versus-raw
+inspection shows whether a parser adjustment is justified.
+
+Raw inspection showed continued Sinhala prose and repetition, not a parser
+mismatch. Run one bounded 5,000-row, one-epoch pilot as the final learnability
+test:
+
+```bash
+python scripts/train_grammar_byt5_edits.py \
+  --data data/grammar_manual_dataset_stage13.jsonl \
+  --model google/byt5-small \
+  --target-format replacement \
+  --output-dir models/grammar_byt5_small_v02b_pilot5k \
+  --max-samples 5000 \
+  --epochs 1 \
+  --batch-size 2 \
+  --eval-batch-size 4 \
+  --gradient-accumulation-steps 8 \
+  --learning-rate 1e-4 \
+  --generation-max-length 576
+```
+
+Expected preparation is 5,000 original, 3,889 safety-compatible, 3,631
+replacement-compatible, 3,405 train, 182 development, and 44 bridge-dropped,
+with zero shared edits. Stop the edit-script approach if the result still has
+50% or more invalid scripts, zero applied scripts, or zero edit F0.5. Do not use
+Stages 2–5 to make this decision.
+
 ## 5. Train ByT5-small v02b
+
+**Paused:** retain this command for later; do not execute it yet.
 
 ```bash
 python scripts/train_grammar_byt5_edits.py \

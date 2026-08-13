@@ -326,3 +326,43 @@ The replacement-format v02b removes numeric offsets and emits `KEEP` or lines of
 1,117 development, and 241 bridge-dropped, with zero shared edits. It additionally
 excludes 802 rows with a repeated/ambiguous source span and 721 standalone
 insertion/deletion rows. Run a new v02b smoke test before any full training.
+
+### ByT5-small v02b replacement smoke result — 2026-08-13
+
+The three-epoch replacement-format smoke run completed but failed its formulation
+gate:
+
+| Item | Result |
+|---|---:|
+| Original deterministic sample | 500 rows |
+| Safety-compatible | 397 |
+| Replacement-compatible | 369 |
+| Train / development / bridge-dropped | 349 / 18 / 2 |
+| Shared train/development edits | 0 |
+| Epoch 1 / 2 / 3 development loss | 1.28156 / 1.17541 / 1.15435 |
+| Development exact | 33.33% |
+| Development clean preservation | 100.00% |
+| Development change exact | 0.00% |
+| Development edit F0.5 | 0.00% |
+| Invalid generated scripts | 100.00% |
+| Applied generated scripts | 0.00% |
+| Runtime | 205.0487 seconds |
+| Best checkpoint under edit-F0.5 selection | `checkpoint-22` |
+
+All checkpoints tied at zero generated edit F0.5, so selecting the first checkpoint
+does not indicate that epoch 1 was substantively best. Do not start the full v02b
+run. Inspect expected versus raw development scripts to distinguish a strict-parser
+mismatch from continued free-text generation.
+
+Raw inspection ruled out a parser mismatch. None of 18 outputs contained `KEEP`
+or `REPLACE |||`; 16 failed `replacement_line_schema`, two were empty/invalid
+operation sequences, and most outputs repeated Sinhala phrases until near the
+generation limit. The model was still performing free-text continuation.
+
+Because 349 training rows provide only 66 optimizer updates, one final bounded
+learnability pilot is permitted before abandoning generative scripts: a
+deterministic 5,000-row sample for one epoch. Preflight yields 3,405 train, 182
+development, and 44 bridge-dropped rows after safety/representation filtering,
+with zero shared edits. Continue that pilot only if invalid scripts fall below
+50%, at least one edit is safely applied, and generated edit F0.5 becomes nonzero.
+Otherwise stop v02 and move to an explicit detector plus span-corrector design.
