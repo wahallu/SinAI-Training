@@ -284,3 +284,45 @@ generated-development decoding because Transformers padded prediction arrays wit
 `-100`, which ByT5's byte tokenizer passed to `chr()`. This was a script
 compatibility failure, not a model result. The evaluator now converts invalid
 padding IDs to the tokenizer pad ID before decoding, with two regression tests.
+
+### ByT5-small v02 smoke result — 2026-08-13
+
+The corrected v02 smoke pipeline completed end to end:
+
+| Item | Result |
+|---|---:|
+| Original deterministic sample | 500 rows |
+| Safety-compatible | 397 |
+| Safety-excluded | 103 |
+| Train / development / bridge-dropped | 373 / 20 / 4 |
+| Shared train/development edits | 0 |
+| Training steps / epochs | 24 / 1 |
+| Runtime | 42.9363 seconds |
+| Training loss | 4.32139 |
+| Development loss | 3.22360 |
+| Development exact | 35.00% |
+| Development clean preservation | 100.00% |
+| Development change exact | 0.00% |
+| Development edit F0.5 | 0.00% |
+| Invalid generated scripts | 100.00% |
+| Applied generated scripts | 0.00% |
+| Checkpoint | `models/grammar_byt5_small_v02_smoke/checkpoint-24` |
+
+Interpretation: the implementation is operational, but this one-epoch 373-row
+smoke model did not learn the output grammar. Every generated script failed
+parsing and was safely converted to `KEEP`; therefore the 35% exact score is only
+the clean fraction of the 20-row development sample, not learned correction.
+Before a full run, inspect `development_predictions.jsonl`. If outputs show a
+partially learned format, run a medium pilot; if they show systematic offset/JSON
+failure, simplify the target representation before spending on full training.
+
+The raw inspection showed 20/20 `invalid_json:Expecting value`. All generations
+were Sinhala continuation text rather than JSON; many repeated phrases or clauses,
+and none began to learn the required structure. v02a is therefore stopped after
+the smoke test.
+
+The replacement-format v02b removes numeric offsets and emits `KEEP` or lines of
+`REPLACE ||| old ||| new`. Full-corpus preflight retains 22,344 rows: 20,986 train,
+1,117 development, and 241 bridge-dropped, with zero shared edits. It additionally
+excludes 802 rows with a repeated/ambiguous source span and 721 standalone
+insertion/deletion rows. Run a new v02b smoke test before any full training.

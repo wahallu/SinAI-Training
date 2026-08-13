@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 
 KEEP = "KEEP"
+REPLACE_SEPARATOR = " ||| "
 NUMBER_RE = re.compile(r"\d[\d,.:/-]*")
 LATIN_RE = re.compile(r"[A-Za-z]+(?:['’-][A-Za-z]+)*")
 URL_RE = re.compile(r"(?:https?://|www\.)\S+|\b\S+@\S+\.\S+\b", re.IGNORECASE)
@@ -69,6 +70,78 @@ def make_edit_script(source: str, target: str) -> str:
         if tag != "equal":
             operations.append({"s": i1, "e": i2, "o": source[i1:i2], "n": target[j1:j2]})
     return json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
+
+
+def make_replacement_script(source: str, target: str) -> str:
+    """Return KEEP or human-readable, uniquely applicable token replacements.
+
+    Insertions, deletions, line-spanning edits, delimiters inside spans, and
+    repeated source spans are deliberately unsupported and raise ValueError.
+    """
+    source, target = normalize(source), normalize(target)
+    if source == target:
+        return KEEP
+    source_matches = list(re.finditer(r"\S+", source))
+    target_matches = list(re.finditer(r"\S+", target))
+    source_tokens = [match.group() for match in source_matches]
+    target_tokens = [match.group() for match in target_matches]
+    operations = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+        None, source_tokens, target_tokens, autojunk=False
+    ).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag != "replace" or i1 == i2 or j1 == j2:
+            raise ValueError("replacement_format_does_not_support_insert_or_delete")
+        old = source[source_matches[i1].start() : source_matches[i2 - 1].end()]
+        new = target[target_matches[j1].start() : target_matches[j2 - 1].end()]
+        if REPLACE_SEPARATOR in old or REPLACE_SEPARATOR in new or "\n" in old or "\n" in new:
+            raise ValueError("replacement_format_delimiter_or_newline")
+        if source.count(old) != 1:
+            raise ValueError("replacement_source_span_not_unique")
+        operations.append((old, new))
+    if not operations:
+        raise ValueError("replacement_format_has_no_operation")
+    return "\n".join(
+        f"REPLACE{REPLACE_SEPARATOR}{old}{REPLACE_SEPARATOR}{new}"
+        for old, new in operations
+    )
+
+
+def replacement_script_to_edit_script(source: str, script: str, max_operations: int = 32) -> str:
+    """Convert strict unique-span replacements into the offset JSON validator format."""
+    source, script = normalize(source), script.strip()
+    if script == KEEP:
+        return KEEP
+    lines = script.splitlines()
+    if not lines or len(lines) > max_operations:
+        raise ValueError("replacement_operation_count")
+    operations = []
+    for line in lines:
+        parts = line.split(REPLACE_SEPARATOR)
+        if len(parts) != 3 or parts[0] != "REPLACE":
+            raise ValueError("replacement_line_schema")
+        old, new = parts[1], parts[2]
+        if not old or not new or old == new:
+            raise ValueError("replacement_empty_or_no_op")
+        if source.count(old) != 1:
+            raise ValueError("replacement_source_span_not_unique")
+        start = source.index(old)
+        operations.append({"s": start, "e": start + len(old), "o": old, "n": new})
+    operations.sort(key=lambda operation: operation["s"])
+    for previous, current in zip(operations, operations[1:]):
+        if current["s"] < previous["e"]:
+            raise ValueError("replacement_operations_overlap")
+    return json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
+
+
+def apply_replacement_script(source: str, script: str, **safety_options) -> "ApplyResult":
+    """Parse unique replacements and pass them through the common safety boundary."""
+    try:
+        edit_script = replacement_script_to_edit_script(source, script)
+    except ValueError as exc:
+        return ApplyResult(normalize(source), "INVALID", (str(exc),), 0)
+    return apply_edit_script(source, edit_script, **safety_options)
 
 
 def parse_edit_script(source: str, script: str, max_operations: int = 32) -> list[dict]:

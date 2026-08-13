@@ -10,7 +10,7 @@ import json
 import time
 from pathlib import Path
 
-from grammar_edit_script import apply_edit_script, normalize
+from grammar_edit_script import apply_edit_script, apply_replacement_script, normalize
 from predict_grammar_byt5 import load_inputs
 
 
@@ -20,6 +20,11 @@ PREFIX = "grammar edits: "
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--target-format",
+        choices=("offset-json", "replacement"),
+        default="offset-json",
+    )
     parser.add_argument("--input-data", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--batch-size", type=int, default=4)
@@ -40,6 +45,10 @@ def main() -> None:
         raise SystemExit("CUDA GPU not found. Pass --allow-cpu only for diagnostics.")
     input_path, output_path = Path(args.input_data), Path(args.output)
     rows = load_inputs(input_path, args.limit)
+    prefix = "grammar replacements: " if args.target_format == "replacement" else PREFIX
+    apply_generated_script = (
+        apply_replacement_script if args.target_format == "replacement" else apply_edit_script
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model, dtype=dtype)
@@ -53,7 +62,7 @@ def main() -> None:
         for start in range(0, len(rows), args.batch_size):
             batch = rows[start : start + args.batch_size]
             lengths = [
-                len(tokenizer(PREFIX + row["input"], add_special_tokens=True)["input_ids"])
+                len(tokenizer(prefix + row["input"], add_special_tokens=True)["input_ids"])
                 for row in batch
             ]
             if any(length > args.max_source_length for length in lengths):
@@ -61,7 +70,7 @@ def main() -> None:
                     f"An input needs {max(lengths)} tokens; raise --max-source-length instead of truncating."
                 )
             encoded = tokenizer(
-                [PREFIX + row["input"] for row in batch], padding=True, truncation=True,
+                [prefix + row["input"] for row in batch], padding=True, truncation=True,
                 max_length=args.max_source_length, return_tensors="pt",
             ).to(device)
             batch_started = time.perf_counter()
@@ -74,7 +83,7 @@ def main() -> None:
             for row, script, token_ids in zip(batch, scripts, generated):
                 eos_id = model.generation_config.eos_token_id
                 generation_finished = eos_id is None or bool((token_ids == eos_id).any().item())
-                result = apply_edit_script(
+                result = apply_generated_script(
                     row["input"], normalize(script), generation_finished=generation_finished
                 )
                 statuses[result.status] += 1
@@ -98,7 +107,8 @@ def main() -> None:
         "input_sha256": hashlib.sha256(input_path.read_bytes()).hexdigest(),
         "output_path": str(output_path.resolve()),
         "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
-        "rows": len(rows), "prefix": PREFIX, "unicode_normalization": "NFC",
+        "rows": len(rows), "prefix": prefix, "target_format": args.target_format,
+        "unicode_normalization": "NFC",
         "decoding": {"do_sample": False, "num_beams": args.num_beams,
                      "max_source_length": args.max_source_length,
                      "max_new_tokens": args.max_new_tokens},

@@ -78,24 +78,89 @@ The trainer will print the safety exclusions and the pair-disjoint split. It mus
 report `shared edits: 0` and finish with a generated development edit F0.5 value.
 Do not evaluate the smoke model on Stages 2–6.
 
-## 5. Train ByT5-small v02
+If `eval_script_invalid_rate` is high, inspect the raw development generations
+before starting the full run:
+
+```bash
+python - <<'PY'
+import collections
+import json
+from pathlib import Path
+
+path = Path("models/grammar_byt5_small_v02_smoke/development_predictions.jsonl")
+rows = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
+print("Statuses:", collections.Counter(row["script_status"] for row in rows))
+print("Reasons:", collections.Counter(
+    reason for row in rows for reason in row.get("safety_reasons", [])
+))
+for row in rows[:20]:
+    print(row["id"], row["script_status"], repr(row["raw_edit_script"]))
+PY
+```
+
+The first recorded 500-row smoke run had 100% invalid scripts, zero edit F0.5,
+and zero applied edits. That proves the pipeline fails safely, but does not yet
+show that the model can learn the JSON/offset format. Do not start the full run
+until the raw generations have been inspected.
+
+Inspection showed ordinary Sinhala continuation text and repetition loops, with
+no partial JSON structure. The offset-JSON experiment is therefore archived as
+**v02a**. Do not increase its sample size or run it on the full corpus.
+
+The next formulation, **v02b**, emits simpler uniquely applicable replacements:
+
+```text
+KEEP
+```
+
+or:
+
+```text
+REPLACE ||| කෙරුනි. ||| කෙරුණි.
+```
+
+It retains the same structural and factual safety boundary but does not require
+the model to count Unicode character positions.
+
+Run its smoke test:
+
+```bash
+python scripts/test_grammar_edit_script.py
+
+python scripts/train_grammar_byt5_edits.py \
+  --data data/grammar_manual_dataset_stage13.jsonl \
+  --model google/byt5-small \
+  --target-format replacement \
+  --output-dir models/grammar_byt5_small_v02b_smoke \
+  --max-samples 500 \
+  --epochs 1
+```
+
+Expected preparation counts are 500 original, 397 safety-compatible, 369
+replacement-compatible, 349 train, 18 development, and two bridge-dropped rows,
+with zero shared edits. Inspect its generated-development output exactly as above,
+changing the directory to `grammar_byt5_small_v02b_smoke`.
+
+## 5. Train ByT5-small v02b
 
 ```bash
 python scripts/train_grammar_byt5_edits.py \
   --data data/grammar_manual_dataset_stage13.jsonl \
   --model google/byt5-small \
-  --output-dir models/grammar_byt5_small_v02 \
+  --target-format replacement \
+  --output-dir models/grammar_byt5_small_v02b \
   --epochs 3 \
   --batch-size 2 \
   --gradient-accumulation-steps 8 \
   --learning-rate 1e-4
 ```
 
-Default v02 preparation produces 23,867 safety-compatible unique rows: 22,434
-train, 1,193 development, and 240 pair-bridge rows excluded. Another 6,500 of the
-30,367 deduplicated v01 rows are excluded because their gold output violates the
-runtime safety contract, chiefly by changing invisible Unicode format controls.
-The precise counts and reasons are written to `run_manifest.json`.
+Default v02b preparation starts with 23,867 safety-compatible unique rows and
+retains 22,344 replacement-compatible rows. It produces 20,986 train, 1,117
+development, and 241 pair-bridge rows excluded. Another 1,523 safe rows are
+excluded because their source replacement span is repeated (802) or because the
+edit is a standalone insertion/deletion (721). The precise counts and reasons
+are written to `run_manifest.json`.
 
 Unlike v01, v02 selects checkpoints using generated development edit F0.5 after
 strict script validation. Invalid or unsafe scripts become `KEEP`. The output
@@ -109,15 +174,16 @@ regression set. Example for Stage 5:
 
 ```bash
 python scripts/predict_grammar_byt5_edits.py \
-  --model models/grammar_byt5_small_v02 \
+  --model models/grammar_byt5_small_v02b \
+  --target-format replacement \
   --input-data data/grammar_test_stage5.jsonl \
-  --output Tested_results/byt5_small_v02_stage5_predictions.jsonl
+  --output Tested_results/byt5_small_v02b_stage5_predictions.jsonl
 
 python scripts/score_grammar_predictions.py \
-  --predictions Tested_results/byt5_small_v02_stage5_predictions.jsonl \
+  --predictions Tested_results/byt5_small_v02b_stage5_predictions.jsonl \
   --gold data/grammar_test_stage5.jsonl \
   --train-data data/grammar_manual_dataset_stage13.jsonl \
-  --output-prefix Tested_results/byt5_small_v02_stage5
+  --output-prefix Tested_results/byt5_small_v02b_stage5
 ```
 
 The prediction rows retain the raw edit script, validation status, rejection

@@ -6,7 +6,9 @@ import unittest
 
 from grammar_edit_script import (
     apply_edit_script,
+    apply_replacement_script,
     make_edit_script,
+    make_replacement_script,
     sanitize_generated_token_ids,
 )
 
@@ -64,6 +66,24 @@ class GrammarEditScriptTests(unittest.TestCase):
 
     def test_out_of_vocabulary_ids_are_also_sanitized(self):
         self.assertEqual(sanitize_generated_token_ids([[5, 9999999]], 0, 384), [[5, 0]])
+
+    def test_replacement_script_round_trip(self):
+        source = "ඔහුන් සදහන් කලේය."
+        target = "ඔවුන් සඳහන් කළේය."
+        script = make_replacement_script(source, target)
+        self.assertIn("REPLACE |||", script)
+        result = apply_replacement_script(source, script)
+        self.assertEqual((result.status, result.text), ("APPLIED", target))
+
+    def test_replacement_script_rejects_insertions(self):
+        with self.assertRaisesRegex(ValueError, "insert_or_delete"):
+            make_replacement_script("ලක්ෂ 10 ක්", "ලක්ෂ 10 පමණ ක්")
+
+    def test_replacement_script_rejects_ambiguous_source(self):
+        source = "අද අද පැමිණියේය."
+        script = "REPLACE ||| අද ||| ඊයේ"
+        result = apply_replacement_script(source, script)
+        self.assertEqual((result.status, result.text), ("INVALID", source))
 
 
 if __name__ == "__main__":

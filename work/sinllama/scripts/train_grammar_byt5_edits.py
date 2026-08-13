@@ -19,8 +19,10 @@ from pathlib import Path
 
 from grammar_edit_script import (
     apply_edit_script,
+    apply_replacement_script,
     correction_metrics,
     make_edit_script,
+    make_replacement_script,
     sanitize_generated_token_ids,
 )
 from train_grammar_byt5 import load_rows, make_pair_disjoint_split
@@ -33,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="Training JSONL only; never a test stage")
     parser.add_argument("--model", default="google/byt5-small")
+    parser.add_argument(
+        "--target-format",
+        choices=("offset-json", "replacement"),
+        default="offset-json",
+        help="Use replacement for v02b; offset-json preserves the archived v02a experiment",
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--epochs", type=float, default=3.0)
     parser.add_argument("--batch-size", type=int, default=2)
@@ -97,6 +105,23 @@ def main() -> None:
     data_stats["safety_compatible_rows"] = len(rows)
     data_stats["safety_incompatible_rows_excluded"] = len(safety_excluded_rows)
     data_stats["safety_exclusion_reasons"] = dict(safety_exclusion_reasons)
+
+    representation_excluded_rows = []
+    representation_exclusion_reasons: collections.Counter[str] = collections.Counter()
+    if args.target_format == "replacement":
+        representable_rows = []
+        for row in rows:
+            try:
+                row["edit_script"] = make_replacement_script(row["input"], row["output"])
+                representable_rows.append(row)
+            except ValueError as exc:
+                row["representation_exclusion_reasons"] = [str(exc)]
+                representation_excluded_rows.append(row)
+                representation_exclusion_reasons[str(exc)] += 1
+        rows = representable_rows
+    data_stats["representation_compatible_rows"] = len(rows)
+    data_stats["representation_incompatible_rows_excluded"] = len(representation_excluded_rows)
+    data_stats["representation_exclusion_reasons"] = dict(representation_exclusion_reasons)
     train_rows, dev_rows, dropped_rows, split_stats = make_pair_disjoint_split(
         rows, args.dev_ratio, args.max_dev_pair_frequency, args.seed
     )
@@ -106,6 +131,7 @@ def main() -> None:
         for split_name, split_rows in (
             ("train", train_rows), ("development", dev_rows),
             ("bridge-dropped", dropped_rows), ("safety-excluded", safety_excluded_rows),
+            ("representation-excluded", representation_excluded_rows),
         ):
             for row in split_rows:
                 handle.write(json.dumps({
@@ -129,18 +155,27 @@ def main() -> None:
     print("Dataset")
     print(f"  source SHA-256 : {data_stats['source_sha256']}")
     print(f"  original unique: {data_stats['usable_unique_rows']:,}")
-    print(f"  safety-compatible: {len(rows):,}")
+    print(f"  safety-compatible: {data_stats['safety_compatible_rows']:,}")
+    print(f"  representation-compatible: {len(rows):,}")
     print(f"  safety excluded: {len(safety_excluded_rows):,} {dict(safety_exclusion_reasons)}")
+    print(
+        f"  representation excluded: {len(representation_excluded_rows):,} "
+        f"{dict(representation_exclusion_reasons)}"
+    )
     print(f"  train/dev/drop : {len(train_rows):,} / {len(dev_rows):,} / {len(dropped_rows):,}")
     print(f"  shared edits   : {split_stats['shared_train_dev_edits']}")
 
+    prefix = "grammar replacements: " if args.target_format == "replacement" else PREFIX
+    apply_generated_script = (
+        apply_replacement_script if args.target_format == "replacement" else apply_edit_script
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model, dtype=dtype)
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
 
-    source_lengths = [len(tokenizer(PREFIX + row["input"], add_special_tokens=True)["input_ids"]) for row in rows]
+    source_lengths = [len(tokenizer(prefix + row["input"], add_special_tokens=True)["input_ids"]) for row in rows]
     target_lengths = [len(tokenizer(row["edit_script"], add_special_tokens=True)["input_ids"]) for row in rows]
     source_over = sum(length > args.max_source_length for length in source_lengths)
     target_over = sum(length > args.max_target_length for length in target_lengths)
@@ -151,7 +186,7 @@ def main() -> None:
 
     def tokenize_batch(batch: dict) -> dict:
         encoded = tokenizer(
-            [PREFIX + text for text in batch["input"]],
+            [prefix + text for text in batch["input"]],
             max_length=args.max_source_length,
             truncation=True,
         )
@@ -186,7 +221,7 @@ def main() -> None:
         raw_scripts = tokenizer.batch_decode(prediction_ids, skip_special_tokens=True)
         corrected, invalid, rejected, applied = [], 0, 0, 0
         for source, script, token_ids in zip(dev_sources, raw_scripts, prediction_ids):
-            result = apply_edit_script(
+            result = apply_generated_script(
                 source, script, generation_finished=generation_finished(token_ids)
             )
             corrected.append(result.text)
@@ -237,8 +272,12 @@ def main() -> None:
 
     manifest = {
         "task": "Sinhala grammar correction with validated edit scripts",
-        "target_format": 'KEEP or JSON [{"s":start,"e":end,"o":"old","n":"new"}]',
-        "prefix": PREFIX,
+        "target_format": (
+            "KEEP or lines: REPLACE ||| unique old span ||| replacement"
+            if args.target_format == "replacement"
+            else 'KEEP or JSON [{"s":start,"e":end,"o":"old","n":"new"}]'
+        ),
+        "prefix": prefix,
         "unicode_normalization": "NFC",
         "checkpoint_selection": "generated development edit F0.5 after safe script application",
         "arguments": vars(args),
@@ -289,7 +328,7 @@ def main() -> None:
             zip(dev_sources, dev_targets, raw_scripts, prediction_ids), 1
         ):
             finished = generation_finished(token_ids)
-            applied = apply_edit_script(source, script, generation_finished=finished)
+            applied = apply_generated_script(source, script, generation_finished=finished)
             handle.write(json.dumps({
                 "id": f"dev-{index:06d}", "input": source, "output": target,
                 "raw_edit_script": script.strip(), "prediction": applied.text,
