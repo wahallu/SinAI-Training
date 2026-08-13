@@ -1,0 +1,7 @@
+# ByT5 Sinhala grammar training and inference
+torch>=2.1
+transformers>=4.46,<5
+datasets>=2.18
+accelerate>=0.29
+safetensors>=0.4
+
