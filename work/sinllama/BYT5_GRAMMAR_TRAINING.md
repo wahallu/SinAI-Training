@@ -3,6 +3,18 @@
 These commands train `google/byt5-small` as a full encoder-decoder model. Stage 6
 is never supplied to the trainer.
 
+Recorded run status: the full `grammar_byt5_small_v01` three-epoch training run
+completed on 2026-08-13. Its evidence and post-training evaluation commands are in
+`Tested_results/grammar_byt5_small_v01_training_20260813.md`. Stage 5 was later
+scored and showed that v01 is not competitive with v27; see
+`../../../manual dataset/Tested_results/byt5_small_v01_stage5_analysis_20260813.md`.
+The consolidated Stage 2–5 audit is in
+`../../../manual dataset/Tested_results/byt5_small_v01_stage2-stage5_analysis_20260813.md`.
+Do not start ByT5-base from the full-sentence recipe. Stage 6 remains unsealed.
+
+The active next experiment is **ByT5-small v02**, which generates validated edit
+scripts instead of copying the complete corrected sentence.
+
 ## 1. Open the GPU terminal
 
 Use an NVIDIA A40 or another CUDA GPU with approximately 24 GB or more VRAM.
@@ -36,7 +48,81 @@ to keep exact correction-pair overlap at zero. The trainer recalculates and prin
 these values; do not continue if `shared edits` is not zero. It saves hashed split
 membership and the complete run configuration inside the output model directory.
 
-## 3. Smoke test first
+## 3. Test the v02 safety code
+
+```bash
+python scripts/test_grammar_edit_script.py
+```
+
+All tests must pass before training.
+
+## 4. Smoke-test ByT5-small v02
+
+```bash
+python scripts/train_grammar_byt5_edits.py \
+  --data data/grammar_manual_dataset_stage13.jsonl \
+  --model google/byt5-small \
+  --output-dir models/grammar_byt5_small_v02_smoke \
+  --max-samples 500 \
+  --epochs 1
+```
+
+The trainer will print the safety exclusions and the pair-disjoint split. It must
+report `shared edits: 0` and finish with a generated development edit F0.5 value.
+Do not evaluate the smoke model on Stages 2–6.
+
+## 5. Train ByT5-small v02
+
+```bash
+python scripts/train_grammar_byt5_edits.py \
+  --data data/grammar_manual_dataset_stage13.jsonl \
+  --model google/byt5-small \
+  --output-dir models/grammar_byt5_small_v02 \
+  --epochs 3 \
+  --batch-size 2 \
+  --gradient-accumulation-steps 8 \
+  --learning-rate 1e-4
+```
+
+Default v02 preparation produces 23,867 safety-compatible unique rows: 22,434
+train, 1,193 development, and 240 pair-bridge rows excluded. Another 6,500 of the
+30,367 deduplicated v01 rows are excluded because their gold output violates the
+runtime safety contract, chiefly by changing invisible Unicode format controls.
+The precise counts and reasons are written to `run_manifest.json`.
+
+Unlike v01, v02 selects checkpoints using generated development edit F0.5 after
+strict script validation. Invalid or unsafe scripts become `KEEP`. The output
+directory also contains `development_gold.jsonl` for an auditable development
+replay. Do not choose a checkpoint using Stages 2–5.
+
+## 6. Freeze and evaluate v02
+
+Only after accepting the generated development metrics, run each frozen
+regression set. Example for Stage 5:
+
+```bash
+python scripts/predict_grammar_byt5_edits.py \
+  --model models/grammar_byt5_small_v02 \
+  --input-data data/grammar_test_stage5.jsonl \
+  --output Tested_results/byt5_small_v02_stage5_predictions.jsonl
+
+python scripts/score_grammar_predictions.py \
+  --predictions Tested_results/byt5_small_v02_stage5_predictions.jsonl \
+  --gold data/grammar_test_stage5.jsonl \
+  --train-data data/grammar_manual_dataset_stage13.jsonl \
+  --output-prefix Tested_results/byt5_small_v02_stage5
+```
+
+The prediction rows retain the raw edit script, validation status, rejection
+reasons, and safely applied final `prediction`. Inspect the manifest's safety
+counts together with the scorer report.
+
+## Archived v01 commands
+
+The following commands document the completed v01 experiment. Do not rerun or
+overwrite its artifacts.
+
+### v01 smoke test
 
 ```bash
 python scripts/train_grammar_byt5.py \
@@ -50,7 +136,7 @@ The run must finish, save a model, and report zero shared train/development exac
 correction pairs. Delete or ignore the smoke checkpoint; it is not an evaluation
 candidate.
 
-## 4. Train ByT5-small
+### v01 full training
 
 ```bash
 python scripts/train_grammar_byt5.py \
@@ -78,7 +164,7 @@ python scripts/train_grammar_byt5.py \
   --resume-from-checkpoint models/grammar_byt5_small_v01/checkpoint-XXXX
 ```
 
-## 5. Evaluate Stage 5 before opening Stage 6
+### v01 Stage 5 evaluation
 
 ```bash
 python scripts/predict_grammar_byt5.py \
@@ -100,20 +186,25 @@ python scripts/score_grammar_predictions.py \
 Inspect the Markdown report. Freeze the checkpoint and decoding configuration
 before generating Stage 6 predictions.
 
-## 6. Train ByT5-base later
+## 7. ByT5-base decision gate
+
+Do not run the following command yet. Train ByT5-base only if v02 has no
+catastrophic generation or protected factual mutation, preserves at least 95% of
+clean development inputs, and materially improves generated development edit
+F0.5. Then use the **edit-script trainer**, not the v01 full-sentence trainer:
 
 After the small-model pipeline is verified, change only the model and output:
 
 ```bash
-python scripts/train_grammar_byt5.py \
+python scripts/train_grammar_byt5_edits.py \
   --data data/grammar_manual_dataset_stage13.jsonl \
   --model google/byt5-base \
-  --output-dir models/grammar_byt5_base_v01 \
+  --output-dir models/grammar_byt5_base_v02 \
   --epochs 3 \
   --batch-size 1 \
   --gradient-accumulation-steps 16 \
   --learning-rate 1e-4
 ```
 
-Do not train ByT5-base until the small-model smoke test, prediction export, and
-offline scorer all work end to end.
+Do not train ByT5-base until the small-model v02 training, safe prediction export,
+and offline scorer work end to end.
