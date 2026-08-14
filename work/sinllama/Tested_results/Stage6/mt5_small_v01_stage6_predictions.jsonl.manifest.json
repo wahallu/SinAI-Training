@@ -1,0 +1,33 @@
+{
+  "model": "/home/jovyan/work/sinllama/models/grammar_mt5_small_v01/checkpoint-1783",
+  "input_path": "/home/jovyan/work/sinllama/data/grammar_stage6_inputs.jsonl",
+  "input_sha256": "e6dfdf31a8d75264a313450d9ce727949cf4a82916e411c972b998060066a66e",
+  "output_path": "/home/jovyan/work/sinllama/Tested_results/Stage6/mt5_small_v01_stage6_predictions.jsonl",
+  "output_sha256": "fbc00adefd3313870b51164f2e7dcf31f1f930dae5042d7d71705f13d3010728",
+  "rows": 286,
+  "prefix": "grammar: ",
+  "unicode_normalization": "NFC",
+  "decoding": {
+    "do_sample": false,
+    "num_beams": 1,
+    "max_source_length": 1024,
+    "max_new_tokens": 1024
+  },
+  "safety": {
+    "status_counts": {
+      "REJECTED": 286
+    },
+    "rejection_reasons": {
+      "latin_span_mutation": 286,
+      "number_mutation": 286,
+      "unicode_format_control_mutation": 152,
+      "byte_length_ratio": 93,
+      "edit_coverage": 30,
+      "generation_cap_or_missing_eos": 14,
+      "repetition_loop": 19
+    }
+  },
+  "total_seconds": 189.579,
+  "examples_per_second": 1.5086,
+  "peak_gpu_memory_bytes": 678728704
+}

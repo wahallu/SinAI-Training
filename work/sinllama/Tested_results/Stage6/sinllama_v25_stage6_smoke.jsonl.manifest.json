@@ -1,0 +1,20 @@
+{
+  "system": "SinLLaMA grammar adapter",
+  "base_model": "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base",
+  "adapter": "/home/jovyan/work/sinllama/models/adapters/grammar_sinllama_v25",
+  "input_path": "/home/jovyan/work/sinllama/data/grammar_stage6_inputs.jsonl",
+  "input_sha256": "e6dfdf31a8d75264a313450d9ce727949cf4a82916e411c972b998060066a66e",
+  "output_path": "/home/jovyan/work/sinllama/Tested_results/Stage6/sinllama_v25_stage6_smoke.jsonl",
+  "output_sha256": "31a1b846b37d6ba9ad1319c4e5a6a4f246335a40dca3e546ca133da694657a8c",
+  "rows": 2,
+  "prompt_instruction": "Correct the grammar of the Sinhala sentence. ONLY fix errors. If the sentence is already correct, return it EXACTLY unchanged — do not rephrase, reorder, or change tense.",
+  "decoding": {
+    "do_sample": false,
+    "max_seq_length": 1024,
+    "max_new_tokens": 256,
+    "stop_at_newline": true
+  },
+  "total_seconds": 3.742,
+  "examples_per_second": 0.5345,
+  "peak_gpu_memory_bytes": 7656702976
+}
