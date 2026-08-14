@@ -28,6 +28,11 @@ NUMBER_RE = re.compile(r"(?<!\w)[+-]?(?:\d[\d,.:/-]*\d|\d)(?!\w)")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--predictions", required=True, help="JSONL with id and prediction")
+    parser.add_argument(
+        "--prediction-field",
+        default="prediction",
+        help="Prediction JSON field to score (default: prediction; use raw_prediction for raw mT5)",
+    )
     parser.add_argument("--gold", required=True, help="Gold JSONL; may be Stage 6 private gold")
     parser.add_argument("--train-data", required=True, help="Training JSONL for unseen-pair analysis")
     parser.add_argument("--output-prefix", required=True, help="Path prefix for .json and .md")
@@ -142,7 +147,12 @@ def metadata_unseen_lemma_pairs(row: dict) -> set[Pair]:
     return result
 
 
-def build_results(gold_rows: list[dict], prediction_rows: list[dict], taught: set[Pair]) -> list[ExampleResult]:
+def build_results(
+    gold_rows: list[dict],
+    prediction_rows: list[dict],
+    taught: set[Pair],
+    prediction_field: str = "prediction",
+) -> list[ExampleResult]:
     gold = indexed(gold_rows, "gold")
     predictions = indexed(prediction_rows, "prediction")
     missing = sorted(set(gold) - set(predictions))
@@ -158,7 +168,11 @@ def build_results(gold_rows: list[dict], prediction_rows: list[dict], taught: se
         pred_row = predictions[row_id]
         source = normalize(str(row.get("input", "")))
         target = normalize(str(row.get("output", "")))
-        prediction = normalize(str(pred_row.get("prediction", "")))
+        if prediction_field not in pred_row:
+            raise ValueError(
+                f"Prediction row {row_id} is missing field {prediction_field!r}"
+            )
+        prediction = normalize(str(pred_row[prediction_field]))
         if not source or not target:
             raise ValueError(f"Gold row {row_id} has an empty input/output")
         submitted_input = normalize(str(pred_row.get("input", source)))
@@ -342,6 +356,7 @@ def markdown_report(report: dict) -> str:
         "",
         f"- predictions: `{report['predictions_path']}`",
         f"- predictions SHA-256: `{report['predictions_sha256']}`",
+        f"- prediction field: `{report['prediction_field']}`",
         f"- gold: `{report['gold_path']}`",
         f"- gold SHA-256: `{report['gold_sha256']}`",
         f"- examples: **{metrics['N']}** ({metrics['change_N']} change / {metrics['clean_N']} clean)",
@@ -407,11 +422,14 @@ def main() -> None:
     gold_rows = load_jsonl(gold_path)
     prediction_rows = load_jsonl(prediction_path)
     taught = training_pairs(train_path)
-    results = build_results(gold_rows, prediction_rows, taught)
+    results = build_results(
+        gold_rows, prediction_rows, taught, prediction_field=args.prediction_field
+    )
     metrics = aggregate(results)
     report = {
         "predictions_path": str(prediction_path.resolve()),
         "predictions_sha256": hashlib.sha256(prediction_path.read_bytes()).hexdigest(),
+        "prediction_field": args.prediction_field,
         "gold_path": str(gold_path.resolve()),
         "gold_sha256": hashlib.sha256(gold_path.read_bytes()).hexdigest(),
         "train_path": str(train_path.resolve()),
