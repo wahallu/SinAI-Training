@@ -1,0 +1,18 @@
+{
+  "model": "/home/jovyan/work/sinllama/models/grammar_byt5_small_v01",
+  "input_path": "/home/jovyan/work/sinllama/data/grammar_test_stage4.jsonl",
+  "input_sha256": "9d58b75fa9e6d24db2eff9f56753f174c098a6a311164b1ad8e31c6a2799f022",
+  "output_path": "/home/jovyan/work/sinllama/Tested_results/byt5_small_v01_stage4_predictions.jsonl",
+  "rows": 36,
+  "prefix": "grammar: ",
+  "unicode_normalization": "NFC",
+  "decoding": {
+    "do_sample": false,
+    "num_beams": 1,
+    "max_source_length": 1024,
+    "max_new_tokens": 1024
+  },
+  "total_seconds": 36.744,
+  "examples_per_second": 0.9798,
+  "peak_gpu_memory_bytes": 914793472
+}
