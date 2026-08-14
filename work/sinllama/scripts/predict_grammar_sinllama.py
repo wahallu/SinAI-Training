@@ -70,12 +70,51 @@ def build_prompt(text: str) -> str:
     )
 
 
+def install_tokenizer_compatibility_alias(base_path: Path) -> bool:
+    """Let Transformers 4.x read tokenizer metadata written by 5.x.
+
+    Transformers 5 renamed the generic fast-tokenizer implementation to
+    ``TokenizersBackend``.  Older 4.x installations cannot resolve that class
+    name even though they can read the same ``tokenizer.json`` through
+    ``PreTrainedTokenizerFast``.  Install an in-memory alias so neither the
+    model directory nor its tokenizer metadata has to be edited.
+    """
+    config_path = base_path / "tokenizer_config.json"
+    if not config_path.is_file():
+        return False
+    try:
+        tokenizer_class = json.loads(
+            config_path.read_text(encoding="utf-8")
+        ).get("tokenizer_class")
+    except (OSError, json.JSONDecodeError):
+        return False
+    if tokenizer_class != "TokenizersBackend":
+        return False
+
+    from transformers import PreTrainedTokenizerFast
+    from transformers.models.auto import tokenization_auto
+
+    original_resolver = tokenization_auto.tokenizer_class_from_name
+    if original_resolver("TokenizersBackend") is not None:
+        return False
+
+    def compatible_resolver(class_name: str):
+        if class_name == "TokenizersBackend":
+            return PreTrainedTokenizerFast
+        return original_resolver(class_name)
+
+    tokenization_auto.tokenizer_class_from_name = compatible_resolver
+    return True
+
+
 def main() -> None:
     args = parse_args()
+    # Unsloth must patch Transformers before Transformers or PEFT is imported.
+    from unsloth import FastLanguageModel
+
     import torch
     from peft import PeftModel
-    from transformers import AutoTokenizer, StoppingCriteria, StoppingCriteriaList
-    from unsloth import FastLanguageModel
+    from transformers import StoppingCriteria, StoppingCriteriaList
 
     if not torch.cuda.is_available():
         raise SystemExit("CUDA GPU not found")
@@ -101,19 +140,25 @@ def main() -> None:
     adapter_path = Path(args.adapter)
     rows = load_inputs(input_path, args.limit)
 
-    print(f"Loading tokenizer: {base_path}")
-    tokenizer = AutoTokenizer.from_pretrained(base_path, local_files_only=True)
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "right"
+    if install_tokenizer_compatibility_alias(base_path):
+        print(
+            "Tokenizer compatibility: mapped Transformers 5 "
+            "TokenizersBackend metadata to the Transformers 4 fast tokenizer"
+        )
 
-    print(f"Loading base model: {base_path}")
-    model, _ = FastLanguageModel.from_pretrained(
+    print(f"Loading base model and tokenizer: {base_path}")
+    model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=str(base_path),
         max_seq_length=args.max_seq_length,
         dtype=None,
         load_in_4bit=True,
         local_files_only=True,
     )
+    if tokenizer is None:
+        raise RuntimeError("Unsloth loaded the model but did not return a tokenizer")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
     print(f"Loading adapter: {adapter_path}")
     model = PeftModel.from_pretrained(model, adapter_path, local_files_only=True)
     FastLanguageModel.for_inference(model)
