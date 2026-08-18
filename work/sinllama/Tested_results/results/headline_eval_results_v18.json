@@ -1,0 +1,46 @@
+{
+  "config": {
+    "adapter": "headline_sinllama_v18",
+    "sample_size": 300,
+    "bands": {
+      "short": {
+        "min_words": 3,
+        "max_words": 5
+      },
+      "medium": {
+        "min_words": 6,
+        "max_words": 7
+      },
+      "long": {
+        "min_words": 8,
+        "max_words": 10
+      }
+    }
+  },
+  "band_stats": {
+    "short": {
+      "n": 300,
+      "in_band": 266,
+      "artifact": 1,
+      "empty": 0
+    },
+    "medium": {
+      "n": 300,
+      "in_band": 228,
+      "artifact": 33,
+      "empty": 0
+    },
+    "long": {
+      "n": 300,
+      "in_band": 234,
+      "artifact": 67,
+      "empty": 0
+    }
+  },
+  "own_band_rouge": {
+    "rouge1": 0.12382780254374673,
+    "rougeL": 0.12057967972286847,
+    "bleu": 0.0,
+    "n": 300
+  }
+}

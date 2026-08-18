@@ -1,146 +1,79 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# ============================================================
+# SinhalaJournal-LLM | Style Rewriter Test v13
+# ============================================================
+# Changes from original v12:
+#   - max_new_tokens now scales with article length (was flat 1024)
+#   - clean_output strips .। danda artifact
+#   - Added evaluation metrics (ROUGE-1/2, BLEU, cosine, length ratio)
+#   - Added batch eval mode: run on N articles, report aggregate accuracy
+#   - STYLE_RULES, GLOBAL_RULES, build_prompt unchanged
+# ============================================================
 
-
-# Unsloth MUST be first import
 from unsloth import FastLanguageModel
 
-import re
+import os
+import sys
 import json
-import torch
-import random
-import numpy as np
+import shutil
+import tempfile
+import traceback
+from pathlib import Path
 from collections import Counter
-from transformers import AutoTokenizer
+
+import re
+import unicodedata
+import torch
+import numpy as np
+
+from transformers import LlamaTokenizerFast
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 
-# ──────────────────────────────────────────────
+# ============================================================
 # PATHS
-# ──────────────────────────────────────────────
-SINLLAMA_BASE  = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
-# ✅ UPDATED: v07/v08 → v09, trained on ~22,237 articles with the
-# overfitting fixes (rank 16, 3 epochs, weight_decay) - eval_loss dropped
-# from 1.087 (v08) to 0.849, and the train/eval loss gap shrank from
-# 2.28x to 1.26x, confirming the overfitting fixes worked.
-STYLE_ADAPTER  = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v11"
+# ============================================================
 
-# ✅ UPDATED: must match TRAIN_DATA_PATH in train_style_rewriter.py for v09.
-# CONFIRM this matches the exact file you trained v09 on.
-TEST_DATA_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_final_cleaned.jsonl"
-
-# ✅ NEW: must match TRAIN_SPLIT / SEED in train_style_rewriter.py exactly,
-# or the "held-out" test set here won't actually match what the trainer
-# held out - and you'd risk evaluating on articles it trained on.
-TRAIN_SPLIT = 0.85
-SEED        = 42
+BASE_MODEL = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
+ADAPTER_PATH = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v12"
+DATASET_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_fixed.jsonl"
 
 
-# ──────────────────────────────────────────────
+# ============================================================
 # CONFIG
-# ──────────────────────────────────────────────
-# ✅ FIXED: was 1024, but train_style_rewriter.py trained with 4096.
-# The mismatch caused Unsloth to silently truncate any article+instruction
-# longer than 1024 tokens BEFORE generation even started - the model
-# never saw the back half of longer articles, which is why
-# length_preservation collapsed to 0.0 specifically on longer test cases
-# while short ones scored fine. Must match the training value.
+# ============================================================
+
 MAX_SEQ_LENGTH = 4096
 
+GEN_TEMPERATURE = 0.10
+GEN_TOP_P = 0.85
+GEN_TOP_K = 50
+GEN_REPETITION_PENALTY = 1.05
 
-# ──────────────────────────────────────────────
-# LOAD TOKENIZER
-# ──────────────────────────────────────────────
-print("🔹 Loading tokenizer from pre-merged base...")
-tokenizer = AutoTokenizer.from_pretrained(
-    SINLLAMA_BASE,
-    local_files_only=True,
-)
-tokenizer.pad_token    = tokenizer.eos_token
-tokenizer.padding_side = "right"
-print(f"   Vocab size: {len(tokenizer):,} tokens")
+# ✅ CHANGED: was a flat 1024 regardless of article length.
+# Long articles were getting truncated mid-sentence, same bug
+# we fixed twice before in earlier test scripts. Now calculated
+# per-article in generate_style() based on input length.
+# This constant is now the FLOOR (minimum), not the ceiling.
+GEN_MAX_NEW_TOKENS_FLOOR = 512
+GEN_MAX_NEW_TOKENS_CEILING = 4096
+GEN_TOKENS_PER_WORD_MULTIPLIER = 3.5  # Sinhala needs more tokens/word than English
 
+SEED = 42
 
-# ──────────────────────────────────────────────
-# LOAD PRE-MERGED SINLLAMA BASE
-# ──────────────────────────────────────────────
-# 🔬 DIAGNOSTIC TOGGLE: set to False to test whether the persistent
-# character-level corruption (dropped/added letters like "විනිශ්චයනට")
-# is a 4-bit quantization artifact or a training artifact. If corruption
-# drops noticeably with this set to False, it's quantization - which
-# points at a different fix (different quant scheme, or accepting the
-# quality/memory tradeoff) rather than more training changes.
-LOAD_IN_4BIT = True
+# Number of articles to evaluate in batch mode (--batch flag).
+BATCH_EVAL_N = 10
 
-print(f"\n🔹 Loading pre-merged SinLLaMA base ({'4bit' if LOAD_IN_4BIT else 'full precision'})...")
-model, _ = FastLanguageModel.from_pretrained(
-    model_name          = SINLLAMA_BASE,
-    max_seq_length      = MAX_SEQ_LENGTH,
-    dtype               = torch.bfloat16,
-    load_in_4bit        = LOAD_IN_4BIT,
-    local_files_only    = True,
-    attn_implementation = "eager",
-)
-print("   SinLLaMA base loaded ✅")
+# Diagnostic thresholds
+FACT_ENTITY_PRESERVATION_TARGET = 0.90
+LENGTH_RATIO_MIN = 0.80
+LENGTH_RATIO_MAX = 1.20
 
 
-# ──────────────────────────────────────────────
-# LOAD STYLE REWRITER ADAPTER
-# ──────────────────────────────────────────────
-print(f"\n🔹 Loading style rewriter adapter...")
-print(f"   {STYLE_ADAPTER}")
-model.load_adapter(STYLE_ADAPTER)
+# ============================================================
+# STYLE IDs
+# ============================================================
 
-FastLanguageModel.for_inference(model)
-model.eval()
-print("   Adapter loaded ✅")
-
-
-# ──────────────────────────────────────────────
-# PROMPT FORMAT (must match training EXACTLY)
-# ──────────────────────────────────────────────
-# ✅ FIXED: this was missing the "### IMPORTANT RULES:" block that
-# train_style_rewriter.py's format_prompt() bakes into every training
-# example. The adapter was trained expecting that block between the
-# instruction and the article - every eval run up to this point was
-# feeding it a differently-shaped prompt than it actually learned on.
-# Must stay byte-for-byte identical to train_style_rewriter.py's version.
-def format_prompt(instruction: str, article: str) -> str:
-    # ✅ FIXED: was missing rules 8, 9, 10 that the model was trained with.
-    # The mismatch meant the model saw a different prompt shape at eval
-    # than what it learned during training, directly hurting all scores.
-    return (
-        "### Instruction:\n"
-        f"{instruction}\n\n"
-        "### IMPORTANT RULES:\n"
-        "1. Keep ALL the same facts in the EXACT same order\n"
-        "2. Maintain approximately the SAME length as the original\n"
-        "3. Do NOT add unrelated content (no greetings, no cricket references unless in original)\n"
-        "4. Do NOT change the meaning of any fact\n"
-        "5. Do NOT add new facts or events\n"
-        "6. Apply the style while preserving ALL factual content\n"
-        "7. Keep all names, numbers, and dates in EXACTLY their original "
-        "wording - only change sentence structure and tone around them\n"
-        "8. Preserve gender-marked honorifics EXACTLY (මහත්මිය stays "
-        "මහත්මිය, මහතා stays මහතා) - never change a person's honorific "
-        "or implied gender\n"
-        "9. Text inside quotation marks must be copied VERBATIM from the "
-        "original - never reword, translate, or insert words into a quote\n"
-        "10. Never introduce symbols, numbers, durations, or dates that "
-        "do not appear in the source article\n\n"
-        "### Input:\n"
-        f"{article}\n\n"
-        "### Response:\n"
-    )
-
-
-# ──────────────────────────────────────────────
-# ✅ NEW: SCHEMA CONVERSION + QC FILTERING
-# (mirrors convert_generated_record / DROP_QC_ISSUES in
-#  train_style_rewriter.py so eval sees the same data shape and the
-#  same exclusions the trainer applied)
-# ──────────────────────────────────────────────
 STYLE_IDS = {
     "style_1_formal_news",
     "style_2_editorial",
@@ -149,677 +82,1066 @@ STYLE_IDS = {
     "style_5_feature",
 }
 
-DROP_QC_ISSUES = {
-    "missing_required_closing",
-    "possible_stutter_duplication",
-    "suspiciously_short",
-}
 
-# Must stay byte-for-byte identical to STYLE_RULES in
-# train_style_rewriter.py - this is what the adapter was trained to
-# expect as its instruction text.
+# ============================================================
+# STYLE RULES  (unchanged from original v12)
+# ============================================================
+
 STYLE_RULES = {
-    "style_4_youth": """
-- Start with casual greeting (දන්නවද? / ඇහුවද? / මේක අහන්න!)
-- Use casual Sinhala: ගොඩක්, ටිකක්, හිතෙනවා
-- Short, punchy sentences
-- End with: ඒ නිසා යාලුවනේ, මේ ගැන අනිවාර්යයෙන්ම දැනගන්න!
-""",
-    "style_3_sports": """
-- Lead with most dramatic fact
-- Action verbs: පහර දුන්නා, ජයග්‍රහණය, ප්‍රහාරය
-""",
-    "style_2_editorial": """
-- Start with: විශ්ලේෂණය කරන විට
-- Use first person plural: අපි, අපට
-- Add analytical language: සැලකිය යුතුය, සමස්තයක් ලෙස
-- Express viewpoint on facts
-""",
+
     "style_1_formal_news": """
-- Objective, passive voice
-- Inverted pyramid - most important fact first
-- No opinion language
-- Keep ALL facts in same order
-""",
+ඔබ සිංහල පුවත්පත් කලාවේ වෘත්තීය ප්‍රවෘත්ති ලේඛකයෙකි.
+
+පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
+
+1. ලිපියේ වඩාත්ම වැදගත් කරුණ මුලින්ම ඉදිරිපත් කරන්න.
+2. වෘත්තීය, නිල සහ වස්තුමය සිංහල භාෂාව භාවිතා කරන්න.
+3. පුවත් වාර්තාකරණයට සුදුසු පැහැදිලි හා සංක්ෂිප්ත වාක්‍ය භාවිතා කරන්න.
+4. අනවශ්‍ය හැඟීම්බර හෝ අදහස් දැක්වීම් සහිත භාෂාව භාවිතා නොකරන්න.
+5. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් නිවැරදිව තබා ගන්න.
+6. කිසිදු නව කරුණක් හෝ සිදුවීමක් එකතු නොකරන්න.
+7. මුල් ලිපියේ ඇති තොරතුරු ඉවත් නොකරන්න.
+8. මුල් ලිපියේ අනුපිළිවෙළ සහ කරුණු ආරක්ෂා කරන්න.
+9. quotation marks තුළ ඇති වචන තිබේ නම් ඒවා වෙනස් නොකරන්න.
+10. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
+11. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
+12. පුවත් වාර්තාවකට ගැළපෙන ස්වභාවික වෘත්තීය ශෛලියක් පවත්වා ගන්න.
+""".strip(),
+
+    "style_2_editorial": """
+ඔබ සිංහල පුවත්පත් කතුවැකි ලේඛකයෙකි.
+
+පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
+
+1. කරුණ පිළිබඳ විශ්ලේෂණාත්මක ආරම්භයක් ලබා දෙන්න.
+2. "අපි", "අපට", "සමස්තයක් ලෙස", "සැලකිය යුතුය" වැනි ස්වභාවික කතුවැකි භාෂාව භාවිතා කරන්න.
+3. සිදුවීමේ පසුබිම, වැදගත්කම සහ බලපෑම විශ්ලේෂණය කරන ආකාරයේ ලිවීමක් භාවිතා කරන්න.
+4. සරල පුවත් වාර්තාවක් ලෙස නොව කතුවැකිමය සහ විශ්ලේෂණාත්මක ස්වරයක් පවත්වා ගන්න.
+5. කරුණු මත පදනම් වූ අදහස් සහ විශ්ලේෂණාත්මක භාෂාව භාවිතා කරන්න.
+6. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් ආරක්ෂා කරන්න.
+7. නව කරුණු, සංඛ්‍යා හෝ සිදුවීම් නිර්මාණය නොකරන්න.
+8. මුල් ලිපියේ අර්ථය වෙනස් නොකරන්න.
+9. quotation marks තුළ ඇති මුල් වචන වෙනස් නොකරන්න.
+10. පුද්ගලයන්ගේ නම් සහ ගෞරව නාම වෙනස් නොකරන්න.
+11. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
+12. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
+13. අතිශයෝක්තියෙන් හෝ අනවශ්‍ය දේශපාලන ප්‍රකාශවලින් වළකින්න.
+""".strip(),
+
+    "style_3_sports": """
+ඔබ සිංහල ක්‍රීඩා පුවත්පත් කලාවේ විශේෂඥයෙකි.
+
+පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
+
+1. වඩාත්ම නාටකීය සහ වැදගත් ක්‍රීඩා කරුණ මුලින්ම ගෙන එන්න. එය ලිපියේ පළමු වාක්‍යයෙන්ම පැහැදිලි විය යුතුය.
+
+2. ඉහළ ශක්තියකින් යුත් නමුත් ස්වභාවික ක්‍රීඩා පුවත් භාෂාවක් භාවිතා කරන්න.
+
+3. ක්‍රීඩා ක්‍රියාකාරකම් පෙන්වන ක්‍රියාකාරී ක්‍රියා පද භාවිතා කරන්න.
+   උදාහරණ:
+   "පහර දුන්නේය"
+   "ජයග්‍රහණය කළේය"
+   "පරාජය කළේය"
+   "ප්‍රහාරය එල්ල කළේය"
+   "ඉදිරියට පැමිණියේය"
+   "ලකුණු රැස් කළේය"
+   "විශිෂ්ට දක්ෂතාවක් දැක්වීය"
+   "තීරණාත්මක ජයග්‍රහණයක් ලබා ගත්තේය"
+
+4. වේගවත් රිද්මයක් සහ උද්වේගකර ක්‍රීඩා පුවත් ස්වරයක් පවත්වා ගන්න.
+
+5. ක්‍රීඩාවේ තීරණාත්මක අවස්ථාව, ජයග්‍රහණය, පරාජය, වාර්තාව හෝ විශිෂ්ට දක්ෂතාවය පැහැදිලිව ඉස්මතු කරන්න.
+
+6. මුල් ලිපියේ ඇති සියලුම කරුණු, ක්‍රීඩකයන්ගේ නම්, කණ්ඩායම් නම්, ස්ථාන, ලකුණු, සංඛ්‍යා, දිනයන් සහ තරග තොරතුරු නිවැරදිව තබා ගන්න.
+
+7. කිසිදු නව ක්‍රීඩකයෙකු, කණ්ඩායමක්, ලකුණක්, තරගයක්, වාර්තාවක් හෝ සිදුවීමක් එකතු නොකරන්න.
+
+8. මුල් ලිපියේ නොමැති ක්‍රීඩා තොරතුරු නිර්මාණය නොකරන්න.
+
+9. මුල් ලිපියේ ඉංග්‍රීසි වචන නොතිබේ නම් අනවශ්‍ය ඉංග්‍රීසි වචන එකතු නොකරන්න.
+
+10. quotation marks තුළ ඇති වචන හෝ ප්‍රකාශ වෙනස් නොකරන්න. ඒවා මුල් ලිපියේ ආකාරයටම තබා ගන්න.
+
+11. පුද්ගලයන්ගේ නම්, ගෞරව නාම සහ ස්ත්‍රී/පුරුෂ සම්බන්ධ නාම වෙනස් නොකරන්න.
+
+12. මුල් ලිපියේ ඇති සංඛ්‍යා, ලකුණු, දිනයන් සහ සංඛ්‍යාත්මක තොරතුරු වෙනස් නොකරන්න.
+
+13. උද්වේගය පෙන්වීම සඳහා උපරිම වශයෙන් එක් විස්මයාර්ථක ලකුණක් (!) පමණක් භාවිතා කරන්න.
+
+14. එකම වචනය හෝ වාක්‍ය ඛණ්ඩය අනවශ්‍ය ලෙස නැවත නැවත භාවිතා නොකරන්න.
+
+15. ක්‍රීඩා පුවත්පත් කලාවට ගැළපෙන ස්වභාවික සිංහල භාෂාව භාවිතා කරන්න. අතිශයෝක්තියෙන් හෝ කෘතිම වාක්‍යවලින් වළකින්න.
+
+16. සම්පූර්ණ වාක්‍ය පමණක් ලියන්න. වාක්‍ය අතරමගදී නතර නොකරන්න.
+
+17. නැවත ලියන ලිපියේ දිග මුල් ලිපියේ දිගට ආසන්නව තබා ගන්න.
+
+18. මුල් ලිපියේ ඇති සියලුම කරුණු ආරක්ෂා කරමින් ක්‍රීඩා පුවත්පත් ශෛලිය පමණක් වෙනස් කරන්න.
+""".strip(),
+
+    "style_4_youth": """
+ඔබ තරුණ පිරිස සඳහා සිංහල ඩිජිටල් මාධ්‍ය ලේඛකයෙකි.
+
+පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
+
+1. තරුණ පාඨකයාගේ අවධානය ලබා ගන්නා ස්වභාවික ආරම්භයක් භාවිතා කරන්න.
+2. සරල, පහසු සහ conversational සිංහල භාෂාව භාවිතා කරන්න.
+3. "ගොඩක්", "ටිකක්", "හිතෙනවා" වැනි ස්වභාවික තරුණ භාෂා භාවිතා කළ හැක.
+4. කෙටි සහ පැහැදිලි වාක්‍ය භාවිතා කරන්න.
+5. ලිපිය කියවන විට තරුණ පාඨකයෙකුට ස්වභාවිකව දැනෙන රිද්මයක් පවත්වා ගන්න.
+6. අතිශයෝක්තියෙන් හෝ කෘතිම slang භාවිතයෙන් වළකින්න.
+7. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් ආරක්ෂා කරන්න.
+8. කිසිදු නව කරුණක් එකතු නොකරන්න.
+9. මුල් ලිපියේ අර්ථය වෙනස් නොකරන්න.
+10. quotation marks තුළ ඇති වචන වෙනස් නොකරන්න.
+11. පුද්ගලයන්ගේ නම් සහ ගෞරව නාම වෙනස් නොකරන්න.
+12. අනවශ්‍ය ඉංග්‍රීසි වචන එකතු නොකරන්න.
+13. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
+14. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
+15. සම්පූර්ණ සහ පැහැදිලි වාක්‍ය භාවිතා කරන්න.
+""".strip(),
+
     "style_5_feature": """
-- Narrative opening: set the scene
-- Descriptive language
-- Present tense where possible
-- Human angle emphasized
-"""
+ඔබ සිංහල පුවත්පත් සහ සඟරා සඳහා විශේෂාංග ලිපි ලියන වෘත්තීය ලේඛකයෙකි.
+
+පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
+
+1. සිදුවීමේ පරිසරය හෝ මනුෂ්‍ය අත්දැකීම ඉස්මතු කරන ආකර්ෂණීය ආරම්භයක් භාවිතා කරන්න.
+2. විස්තරාත්මක නමුත් ස්වභාවික සිංහල භාෂාව භාවිතා කරන්න.
+3. පාඨකයාට සිදුවීම සිතින් දැකගත හැකි වන ආකාරයේ වාතාවරණයක් නිර්මාණය කරන්න.
+4. මනුෂ්‍ය කේන්ද්‍රීය පැත්ත ඉස්මතු කරන්න.
+5. අවශ්‍ය තැන්වල වර්තමාන කාල රටාව භාවිතා කළ හැක.
+6. පුවත් වාර්තාවකට වඩා narrative සහ feature-style flow එකක් පවත්වා ගන්න.
+7. නමුත් මුල් ලිපියේ නොමැති සිදුවීම්, හැඟීම් හෝ පසුබිම් තොරතුරු නිර්මාණය නොකරන්න.
+8. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් ආරක්ෂා කරන්න.
+9. quotation marks තුළ ඇති වචන වෙනස් නොකරන්න.
+10. පුද්ගලයන්ගේ නම් සහ ගෞරව නාම වෙනස් නොකරන්න.
+11. මුල් ලිපියේ අර්ථය වෙනස් නොකරන්න.
+12. අනවශ්‍ය ඉංග්‍රීසි වචන එකතු නොකරන්න.
+13. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
+14. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
+15. සම්පූර්ණ වාක්‍ය භාවිතා කරන්න.
+""".strip(),
 }
 
 
-def convert_generated_record(rec: dict):
-    """Same conversion as train_style_rewriter.py - maps the raw
-    content/style/rewritten_text schema into instruction/input/output/
-    metadata, dropping failed or QC-flagged rows. Returns None to skip."""
-    if rec.get("status") == "failed" or rec.get("error"):
-        return None
+# ============================================================
+# GLOBAL FACT PRESERVATION RULES  (unchanged from original v12)
+# ============================================================
 
-    style_id = rec.get("style")
-    if style_id not in STYLE_IDS:
-        return None
+GLOBAL_RULES = """
+### IMPORTANT FACT-PRESERVATION RULES
 
-    article   = (rec.get("content") or "").strip()
-    rewritten = (rec.get("rewritten_text") or "").strip()
-    if not article or not rewritten:
-        return None
-
-    qc_issues = set(rec.get("qc_issues", []))
-    if qc_issues & DROP_QC_ISSUES:
-        return None
-
-    if len(rewritten) < 50:
-        return None
-
-    return {
-        "instruction": STYLE_RULES.get(style_id, "").strip(),
-        "input":       article,
-        "output":      rewritten,
-        "metadata": {
-            "style_id": style_id,
-            "url":      rec.get("url"),
-            "category": rec.get("category"),
-        },
-    }
+1. Preserve ALL factual information from the source article.
+2. Do NOT invent facts.
+3. Do NOT remove important facts.
+4. Do NOT change names.
+5. Do NOT change numbers.
+6. Do NOT change dates.
+7. Do NOT change locations.
+8. Do NOT change team names or player names.
+9. Preserve gender-marked honorifics exactly.
+10. "මහත්මිය" must remain "මහත්මිය".
+11. "මහතා" must remain "මහතා".
+12. Text inside quotation marks must remain VERBATIM.
+13. Do NOT insert new words into quotations.
+14. Do NOT translate quotations.
+15. Do NOT introduce new durations.
+16. Do NOT introduce new numbers.
+17. Do NOT introduce new symbols.
+18. Do NOT add events that are absent from the source.
+19. Keep the rewritten article approximately the same length.
+20. Write complete sentences.
+21. Do not stop in the middle of a sentence.
+22. Do not add an explanation before or after the rewritten article.
+23. Return ONLY the rewritten article.
+"""
 
 
-# ──────────────────────────────────────────────
+# ============================================================
 # EVALUATION METRICS
-# ──────────────────────────────────────────────
-def calculate_rouge_scores(reference: str, generated: str) -> dict:
-    """
-    Calculate ROUGE-like scores (precision, recall, F1)
-    Based on n-gram overlap
-    """
-    def get_ngrams(text, n=1):
-        words = text.split()
-        return [tuple(words[i:i+n]) for i in range(len(words)-n+1)]
-    
-    metrics = {}
-    
-    for n in [1, 2]:  # Unigram and bigram
-        ref_ngrams = Counter(get_ngrams(reference, n))
-        gen_ngrams = Counter(get_ngrams(generated, n))
-        
-        # Calculate overlap
-        overlap = sum((ref_ngrams & gen_ngrams).values())
-        ref_total = sum(ref_ngrams.values())
-        gen_total = sum(gen_ngrams.values())
-        
-        precision = overlap / gen_total if gen_total > 0 else 0
-        recall = overlap / ref_total if ref_total > 0 else 0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        
-        metrics[f'ROUGE-{n}_precision'] = precision
-        metrics[f'ROUGE-{n}_recall'] = recall
-        metrics[f'ROUGE-{n}_f1'] = f1
-    
-    return metrics
+# ============================================================
+
+def get_ngrams(words, n):
+    return [tuple(words[i:i+n]) for i in range(len(words)-n+1)]
 
 
-def calculate_bleu_score(reference: str, generated: str, max_n=4) -> float:
-    """
-    Calculate simplified BLEU score, with smoothing.
-
-    ✅ FIXED: the previous version returned 0.0 outright if ANY single
-    n-gram order (1 through 4) had zero overlap - e.g. test case 1's
-    FORMAL rewrite scored ROUGE-1=0.27 and cosine=0.82 (clearly
-    substantial real overlap) but BLEU=0.0000, purely because 4-gram
-    exact match happened to be zero. For genuine style rewriting, which
-    restructures sentences, a 4-consecutive-word exact match against the
-    reference is rare even for a GOOD rewrite - so this was collapsing
-    BLEU to ~0 almost every time regardless of quality, wasting its full
-    20% weight in the overall score. This adds standard additive
-    smoothing (small epsilon on zero-count n-grams, same idea as NLTK's
-    SmoothingFunction method1) instead of an all-or-nothing cutoff.
-    """
+def rouge_n(reference, generated, n):
     ref_words = reference.split()
     gen_words = generated.split()
-    
-    if len(gen_words) == 0:
-        return 0.0
-    
-    precisions = []
-    epsilon = 0.1  # smoothing constant for zero-count n-gram orders
-    for n in range(1, max_n + 1):
-        ref_ngrams = Counter()
-        gen_ngrams = Counter()
-        
-        for i in range(len(ref_words) - n + 1):
-            ref_ngrams[tuple(ref_words[i:i+n])] += 1
-        
-        for i in range(len(gen_words) - n + 1):
-            gen_ngrams[tuple(gen_words[i:i+n])] += 1
-        
-        overlap = sum((ref_ngrams & gen_ngrams).values())
-        total = sum(gen_ngrams.values())
+    ref_ngrams = Counter(get_ngrams(ref_words, n))
+    gen_ngrams = Counter(get_ngrams(gen_words, n))
+    overlap = sum((ref_ngrams & gen_ngrams).values())
+    ref_total = sum(ref_ngrams.values())
+    gen_total = sum(gen_ngrams.values())
+    precision = overlap / gen_total if gen_total else 0
+    recall = overlap / ref_total if ref_total else 0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0
+    return {"precision": precision, "recall": recall, "f1": f1}
 
+
+def smoothed_bleu(reference, generated, max_n=4):
+    ref_words = reference.split()
+    gen_words = generated.split()
+    if not gen_words:
+        return 0.0
+    epsilon = 0.1
+    precisions = []
+    for n in range(1, max_n + 1):
+        ref_ng = Counter(get_ngrams(ref_words, n))
+        gen_ng = Counter(get_ngrams(gen_words, n))
+        overlap = sum((ref_ng & gen_ng).values())
+        total = sum(gen_ng.values())
         if total == 0:
             precisions.append(0.0)
         elif overlap == 0:
-            # smoothed instead of a hard zero, so one missing n-gram
-            # order doesn't zero out the whole score
             precisions.append(epsilon / total)
         else:
             precisions.append(overlap / total)
-
     if all(p == 0 for p in precisions):
         return 0.0
-
     geo_mean = np.exp(np.mean(np.log([max(p, 1e-9) for p in precisions])))
-    brevity_penalty = min(1.0, len(gen_words) / len(ref_words)) if len(ref_words) > 0 else 0
-    
-    return geo_mean * brevity_penalty
+    bp = min(1.0, len(gen_words) / len(ref_words)) if ref_words else 0
+    return geo_mean * bp
 
 
-def calculate_cosine_similarity(reference: str, generated: str) -> float:
-    """
-    Calculate cosine similarity using TF-IDF
-    """
+def cosine_sim(reference, generated):
     try:
-        vectorizer = TfidfVectorizer()
-        tfidf_matrix = vectorizer.fit_transform([reference, generated])
-        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-        return float(similarity)
-    except:
+        vec = TfidfVectorizer()
+        mat = vec.fit_transform([reference, generated])
+        return float(cosine_similarity(mat[0:1], mat[1:2])[0][0])
+    except Exception:
         return 0.0
 
 
-def calculate_length_preservation(original: str, generated: str) -> float:
-    """
-    Calculate how well the generated text preserves original length
-    Score of 1.0 means perfect preservation
-    """
-    orig_len = len(original.split())
-    gen_len = len(generated.split())
-    
-    if orig_len == 0:
+def length_ratio(reference, generated):
+    orig = len(reference.split())
+    gen = len(generated.split())
+    return gen / orig if orig else 0.0
+
+
+def length_preservation(reference, generated):
+    ratio = length_ratio(reference, generated)
+    if ratio == 0:
         return 0.0
-    
-    ratio = gen_len / orig_len
-    # Perfect score if ratio is between 0.8 and 1.2
-    if 0.8 <= ratio <= 1.2:
+    if LENGTH_RATIO_MIN <= ratio <= LENGTH_RATIO_MAX:
         return 1.0
-    elif ratio < 0.8:
-        return ratio / 0.8
-    else:
-        return max(0, 2.0 - ratio / 1.2)
+    elif ratio < LENGTH_RATIO_MIN:
+        return ratio / LENGTH_RATIO_MIN
+    return max(0.0, 2.0 - ratio / LENGTH_RATIO_MAX)
 
 
-def calculate_vocabulary_diversity(text: str) -> float:
+def normalize_token(token):
+    """Normalize a Sinhala/text token for robust entity matching."""
+    token = unicodedata.normalize("NFC", token)
+    token = token.strip(" \t\n\r.,!?;:()[]{}\"'“”‘’«»/\\|—–-")
+    return token
+
+
+def extract_entities(source):
     """
-    Calculate Type-Token Ratio (TTR) for vocabulary diversity
+    Lightweight factual/entity extraction.
+
+    This intentionally avoids an external NER model. It focuses on:
+      - numbers
+      - dates/time-like numeric expressions
+      - quoted text
+      - capitalized/Latin tokens
+      - multi-word Sinhala/Latin proper-name candidates
+
+    The goal is a diagnostic, not a perfect Sinhala NER system.
     """
-    words = text.split()
-    if len(words) == 0:
-        return 0.0
-    
-    unique_words = len(set(words))
-    return unique_words / len(words)
+    entities = []
 
+    # Numbers, including decimals and comma-separated numbers.
+    entities += re.findall(r"\b\d+(?:[.,]\d+)*\b", source)
 
-def calculate_style_distinctiveness(generated: str, style_name: str) -> dict:
-    """
-    Check if generated text has style-specific markers
-    """
-    metrics = {}
-    
-    # Check for style-specific patterns
-    if style_name == 'youth':
-        # Youth style should have conversational markers
-        has_conversational = any([
-            'ඇත්තටම' in generated,
-            'මේක' in generated,
-            'නම්' in generated,
-            'ගොඩක්' in generated,
-        ])
-        metrics['conversational_markers'] = has_conversational
-    
-    elif style_name == 'sports':
-        # Sports style should have action words
-        has_action = any([
-            'දැවැන්ත' in generated,
-            'විශිෂ්ට' in generated,
-            'ජය' in generated,
-            '!' in generated,
-        ])
-        metrics['action_language'] = has_action
-    
-    elif style_name == 'editorial':
-        # Editorial should have analytical markers
-        has_analytical = any([
-            'විශ්ලේෂණ' in generated,
-            'තත්ත්වය' in generated,
-            'අභියෝග' in generated,
-            'මෙම' in generated,
-        ])
-        metrics['analytical_depth'] = has_analytical
-    
-    elif style_name == 'feature':
-        # Feature should have narrative elements
-        has_narrative = any([
-            'කතාව' in generated,
-            'ජීවිත' in generated,
-            'සිහින' in generated,
-            'බලාපොරොත්තු' in generated,
-        ])
-        metrics['narrative_elements'] = has_narrative
-    
-    elif style_name == 'formal':
-        # ✅ FIXED: this used to check len(generated.split()) <= 50 -
-        # an absolute word cap that will always fail once the model is
-        # correctly producing full-length rewrites (your articles average
-        # 182 words). "Formal" means objective/passive, not short -
-        # length is already measured separately by length_preservation.
-        # This now checks for the actual formal-style trait: absence of
-        # first-person/opinion language, which IS what rule 3 in the
-        # formal style prompt asks for.
-        opinion_markers = ['මම හිතන්නේ', 'අපගේ මතය', 'මගේ අදහස', 'විශ්වාස කරමි']
-        is_objective = not any(marker in generated for marker in opinion_markers)
-        metrics['objective_tone'] = is_objective
-    
-    return metrics
+    # Quoted content must be preserved verbatim.
+    entities += re.findall(r'[“"«](.*?)[”"»]', source, flags=re.DOTALL)
 
+    # Latin/English tokens that may be names, organizations, roads, etc.
+    entities += re.findall(r"\b[A-Za-z][A-Za-z0-9._/-]{1,}\b", source)
 
-def evaluate_generation(original: str, generated: str, reference: str, style_name: str) -> dict:
-    """
-    Comprehensive evaluation of generated text
-    
-    Args:
-        original: Original input article
-        generated: Model's rewritten output
-        reference: Expected output (from dataset)
-        style_name: Target style name
-    
-    Returns:
-        Dictionary of evaluation metrics
-    """
-    metrics = {}
-    
-    # Content preservation (ROUGE)
-    rouge = calculate_rouge_scores(reference, generated)
-    metrics.update(rouge)
-    
-    # BLEU score
-    metrics['BLEU'] = calculate_bleu_score(reference, generated)
-    
-    # Semantic similarity
-    metrics['cosine_similarity'] = calculate_cosine_similarity(reference, generated)
-    
-    # Length preservation
-    metrics['length_preservation'] = calculate_length_preservation(original, generated)
-    
-    # Vocabulary diversity
-    metrics['vocabulary_diversity'] = calculate_vocabulary_diversity(generated)
-    
-    # Style distinctiveness
-    style_metrics = calculate_style_distinctiveness(generated, style_name)
-    metrics.update(style_metrics)
-    
-    # Overall quality score (weighted average)
-    weights = {
-        'ROUGE-1_f1': 0.25,
-        'ROUGE-2_f1': 0.20,
-        'BLEU': 0.20,
-        'cosine_similarity': 0.20,
-        'length_preservation': 0.15,
-    }
-    
-    quality_score = sum(metrics.get(k, 0) * v for k, v in weights.items())
-    metrics['overall_quality_score'] = quality_score
-    
-    return metrics
+    # Sinhala multi-token candidates containing common proper-name markers.
+    # Keep these conservative to avoid penalizing ordinary words.
+    for phrase in re.findall(
+        r"(?:ශ්‍රී\s+පාද|මස්කෙළිය|මාවුස්සාකැලේ|නාවලපිටිය|"
+        r"රත්නපුර|නිවිතිගල|හැටන්|කොළඹ|නුවරඑලිය|නුවරඑළිය|"
+        r"ගිනිගත්හේන|නෝටව්?බ්‍රිජ්|නෝටන්බ්‍රිජ්)",
+        source
+    ):
+        entities.append(phrase)
 
-
-# ──────────────────────────────────────────────
-# STYLE REWRITING FUNCTION
-# ──────────────────────────────────────────────
-def rewrite_in_style(article: str, style_instruction: str) -> str:
-    """
-    Rewrite Sinhala news article in specified style.
-
-    Args:
-        article          : Original Sinhala article text
-        style_instruction: Style transformation instruction
-
-    Returns:
-        Rewritten article in target style
-    """
-    prompt = format_prompt(style_instruction, article)
-    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-
-    # ✅ FIXED: max_new_tokens was a flat 256, which truncates almost any
-    # real article mid-sentence (your style rules require ~same length as
-    # the source). Scale it to the input length instead, same approach
-    # used in generate_style_dataset.py's max_tokens fix.
-    input_word_count = len(article.split())
-    max_new_tokens = min(max(384, int(input_word_count * 3.5)), 2048)
-
-    # ⚠️ REVERTED: beam search (num_beams>1) fails under Unsloth's fast
-    # inference path with "AttributeError: 'tuple' object has no
-    # attribute 'reorder_cache'". Known Unsloth limitation - their
-    # generate() patch uses a legacy tuple-based KV cache that doesn't
-    # implement the cache reordering beam search needs.
-    NUM_BEAMS = 1
-
-    # ✅ FIXED: removed no_repeat_ngram_size and repetition_penalty.
-    # These were CAUSING the syllable-dropping corruption, not
-    # preventing it. Sinhala is agglutinative - the same subword token
-    # sequences legitimately recur constantly within one article (case
-    # endings like -යුතු/-වන/-ගිය, honorifics, common stems).
-    # no_repeat_ngram_size=3 is a HARD BAN: once a 3-token sequence has
-    # appeared, the model is forbidden from producing it again - so the
-    # second time it needs to write e.g. "කටයුතු" it CANNOT, and is
-    # forced to emit a corrupted near-miss like "කටතු". That's exactly
-    # the observed failure (කටයුතු->කටතු, පසුගිය->පසුගදා,
-    # මුහුණ දෙන->මුණෙන). repetition_penalty pushes the same wrong way.
-    # Both are designed for English, where a repeated 3-gram usually
-    # signals degenerate looping; in a morphologically rich language
-    # with subword tokenization they actively break correct spelling.
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens      = max_new_tokens,
-            do_sample           = False,
-            num_beams           = NUM_BEAMS,
-            repetition_penalty  = 1.0,   # 1.0 = disabled
-            eos_token_id         = tokenizer.eos_token_id,
-            pad_token_id         = tokenizer.eos_token_id,
-            use_cache            = True,
-        )
-
-    result = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-    # STRICT CLEANING - Remove prompt and keep only response
-    if "### Response:" in result:
-        result = result.split("### Response:")[-1]
-
-    # Remove instruction/input artifacts
-    if "### Instruction:" in result:
-        result = result.split("### Instruction:")[0]
-
-    if "### Input:" in result:
-        result = result.split("### Input:")[0]
-
-    # ✅ FIXED: the old per-SENTENCE English-word filter would drop an
-    # entire sentence (sometimes the entire output - see test cases
-    # 22/37/38) if it contained a single corrupted Latin-looking
-    # fragment. Now only strips stray Latin substrings out of an
-    # otherwise-Sinhala sentence, instead of deleting the whole sentence -
-    # much less likely to silently zero out the response.
-    sentences = re.split(r'(?<=[।\.!?])\s+', result)
-    cleaned_sentences = []
-    for sentence in sentences:
-        sinhala_chars = len(re.findall(r'[\u0D80-\u0DFF]', sentence))
-        english_chars = len(re.findall(r'[A-Za-z]', sentence))
-
-        if sinhala_chars == 0:
-            continue  # nothing Sinhala in this sentence at all - skip it
-
-        # If it's overwhelmingly English, this sentence probably isn't a
-        # real part of the rewrite - skip it. Otherwise, just strip the
-        # stray Latin fragments and keep the sentence.
-        if english_chars > 0 and english_chars / (sinhala_chars + english_chars) > 0.4:
+    # Normalize and deduplicate while preserving order.
+    out = []
+    seen = set()
+    for e in entities:
+        e = normalize_token(e)
+        if not e:
             continue
-
-        sentence = re.sub(r'\b[A-Za-z]{1,4}\b', '', sentence)  # standalone stray Latin words
-        # ✅ FIXED: \b doesn't separate Latin from Sinhala since Python's
-        # Unicode-aware regex treats both as \w characters - so a fragment
-        # like "way" glued directly onto a Sinhala word (e.g. "ලං wayයේ")
-        # wasn't being caught by the \b version above. This second pass
-        # catches Latin runs sitting immediately next to Sinhala characters
-        # with no boundary between them.
-        sentence = re.sub(r'(?<=[\u0D80-\u0DFF])[A-Za-z]{1,6}|[A-Za-z]{1,6}(?=[\u0D80-\u0DFF])', '', sentence)
-        sentence = re.sub(r'\s{2,}', ' ', sentence).strip()
-
-        if sentence and not re.match(r'^[#\*\-\>]', sentence):
-            cleaned_sentences.append(sentence)
-
-    result = '। '.join(cleaned_sentences)
-
-    # ✅ REMOVED: the old "keep only first 3 lines" cap. That made sense
-    # when max_new_tokens=256 produced short garbled output, but now that
-    # generations are meant to run the full length of the article, this
-    # was silently truncating otherwise-good long rewrites down to a
-    # few lines - directly hurting length_preservation.
-    result = re.sub(r'\n{2,}', '\n', result.strip())
-
-    return result.strip()
+        key = e.casefold()
+        if key not in seen:
+            seen.add(key)
+            out.append(e)
+    return out
 
 
-# ──────────────────────────────────────────────
-# STYLE INSTRUCTIONS (display labels only - actual instruction text
-# passed to the model comes from STYLE_RULES/item["instruction"] above)
-# ──────────────────────────────────────────────
-STYLE_INSTRUCTIONS = {
-    "formal":    "Rewrite the following Sinhala news article in formal news reporting style (ප්‍රධාන පුවත්). Use objective, concise language with inverted-pyramid structure.",
-    "editorial": "Rewrite the following Sinhala news article in editorial/opinion style (කතුවැකිය/විශේෂාංග). Add analytical perspective with longer sentences.",
-    "sports":    "Rewrite the following Sinhala news article in dynamic sports reporting style (ක්‍රීඩා). Use energetic, action-oriented language.",
-    "youth":     "Rewrite the following Sinhala news article in youth-oriented conversational style (යෞවන-අනුකූල). Use friendly, relatable language.",
-    "feature":   "Rewrite the following Sinhala news article in feature/narrative storytelling style (විශේෂාංග/Storytelling). Focus on human angle with emotional depth.",
-}
-
-
-# ──────────────────────────────────────────────
-# ✅ UPDATED: TEST DATA LOADING
-# Reads the raw generate_style_dataset.py output, converts it with the
-# same logic + QC filtering as training, then reproduces the EXACT same
-# article-level (by url) train/val split as train_style_rewriter.py so
-# this evaluates only on articles the adapter never trained on.
-# ──────────────────────────────────────────────
-def load_test_data(filepath=TEST_DATA_PATH, split_ratio=TRAIN_SPLIT, seed=SEED,
-                    n_articles=1, min_words=40):
+def entity_preservation(source, generated):
     """
-    ✅ UPDATED: selects N articles (default 1) with at least min_words
-    words from the held-out val set that have all 5 styles present, and
-    returns all 5 style rows for each - so a single long article gets
-    tested across all 5 styles (5 total test cases) instead of a
-    scattered sample.
+    Percentage of extracted source entities/numbers that still occur
+    in the generated article. Exact normalized substring matching is used.
     """
-    raw_records = []
-    with open(filepath, 'r', encoding='utf-8') as f:
+    entities = extract_entities(source)
+    if not entities:
+        return 1.0, [], []
+
+    gen_norm = unicodedata.normalize("NFC", generated).casefold()
+    preserved = []
+    missing = []
+
+    for entity in entities:
+        if unicodedata.normalize("NFC", entity).casefold() in gen_norm:
+            preserved.append(entity)
+        else:
+            missing.append(entity)
+
+    return len(preserved) / len(entities), preserved, missing
+
+
+def new_content_candidates(source, generated):
+    """
+    Find simple numeric/quoted/Latin facts that appear in generated text
+    but were absent from the source. This is a conservative hallucination
+    signal, not a semantic hallucination detector.
+    """
+    source_entities = set(e.casefold() for e in extract_entities(source))
+    generated_entities = extract_entities(generated)
+
+    new_items = []
+    seen = set()
+
+    for entity in generated_entities:
+        key = entity.casefold()
+        if key not in source_entities and key not in seen:
+            seen.add(key)
+            new_items.append(entity)
+
+    return new_items
+
+
+def factual_diagnostics(source, generated):
+    preservation, preserved, missing = entity_preservation(source, generated)
+    new_items = new_content_candidates(source, generated)
+
+    return {
+        "entity_preservation": preservation,
+        "preserved_entities": preserved,
+        "missing_entities": missing,
+        "new_fact_candidates": new_items,
+        "missing_count": len(missing),
+        "new_fact_count": len(new_items),
+    }
+
+
+def evaluate(source, generated, reference=None):
+    """
+    Evaluate generated text.
+
+    - Reference-based metrics measure similarity to the human/reference rewrite
+      when one is available.
+    - Source-based diagnostics always measure factual preservation against the
+      original article.
+    """
+    comparison = reference if reference else source
+
+    r1 = rouge_n(comparison, generated, 1)
+    r2 = rouge_n(comparison, generated, 2)
+    bleu = smoothed_bleu(comparison, generated)
+    cos = cosine_sim(comparison, generated)
+    lp = length_preservation(comparison, generated)
+
+    factual = factual_diagnostics(source, generated)
+
+    # Keep the original style/rewrite score, but explicitly penalize
+    # factual loss. This prevents a short/high-overlap rewrite from looking
+    # excellent while silently deleting facts.
+    style_score = (
+        r1["f1"] * 0.20 +
+        r2["f1"] * 0.15 +
+        bleu     * 0.15 +
+        cos      * 0.15 +
+        lp       * 0.10
+    )
+
+    factual_score = factual["entity_preservation"] * 0.25
+    score = style_score + factual_score
+
+    return {
+        "rouge_1_f1": r1["f1"],
+        "rouge_2_f1": r2["f1"],
+        "bleu": bleu,
+        "cosine": cos,
+        "length_preservation": lp,
+        "length_ratio": length_ratio(comparison, generated),
+        "entity_preservation": factual["entity_preservation"],
+        "missing_entities": factual["missing_entities"],
+        "new_fact_candidates": factual["new_fact_candidates"],
+        "missing_count": factual["missing_count"],
+        "new_fact_count": factual["new_fact_count"],
+        "overall": score,
+        "comparison_type": "reference" if reference else "source",
+    }
+
+# ============================================================
+# TOKENIZER PATCH  (unchanged from original v12)
+# ============================================================
+
+def create_patched_model_directory(base_path: str):
+    base = Path(base_path)
+    if not base.exists():
+        raise FileNotFoundError(f"Base model does not exist: {base}")
+    temp_dir = Path(tempfile.mkdtemp(prefix="sinllama_tokenizer_fixed_"))
+    print()
+    print("🔧 Creating temporary tokenizer-compatible model directory...")
+    print(f"   Original : {base}")
+    print(f"   Temporary: {temp_dir}")
+    for item in base.iterdir():
+        destination = temp_dir / item.name
+        try:
+            destination.symlink_to(item, target_is_directory=item.is_dir())
+        except Exception:
+            if item.is_file():
+                shutil.copy2(item, destination)
+    original_config_path = base / "tokenizer_config.json"
+    if not original_config_path.exists():
+        raise FileNotFoundError("tokenizer_config.json was not found in base model.")
+    with open(original_config_path, "r", encoding="utf-8") as f:
+        tokenizer_config = json.load(f)
+    tokenizer_config["tokenizer_class"] = "LlamaTokenizerFast"
+    if "backend_tokenizer_class" in tokenizer_config:
+        tokenizer_config.pop("backend_tokenizer_class")
+    patched_config_path = temp_dir / "tokenizer_config.json"
+    with open(patched_config_path, "w", encoding="utf-8") as f:
+        json.dump(tokenizer_config, f, ensure_ascii=False, indent=2)
+    print("   ✅ Temporary tokenizer patch created.")
+    return temp_dir
+
+
+# ============================================================
+# LOAD TOKENIZER  (unchanged)
+# ============================================================
+
+def load_tokenizer(model_path: str):
+    print()
+    print("🔹 Loading LLaMA tokenizer explicitly...")
+    tokenizer = LlamaTokenizerFast.from_pretrained(model_path, local_files_only=True)
+    tokenizer.padding_side = "right"
+    if tokenizer.eos_token is not None:
+        tokenizer.pad_token = tokenizer.eos_token
+    print(f"   ✅ LlamaTokenizerFast loaded — vocab {len(tokenizer):,}")
+    return tokenizer
+
+
+# ============================================================
+# LOAD MODEL + ADAPTER  (unchanged)
+# ============================================================
+
+def load_model():
+    print()
+    print("🔹 Preparing tokenizer-compatible base model...")
+    patched_base = create_patched_model_directory(BASE_MODEL)
+    tokenizer = load_tokenizer(str(patched_base))
+    print()
+    print("🔹 Loading SinLLaMA base through Unsloth...")
+    try:
+        model, _ = FastLanguageModel.from_pretrained(
+            model_name=str(patched_base),
+            max_seq_length=MAX_SEQ_LENGTH,
+            dtype=torch.bfloat16,
+            load_in_4bit=True,
+            local_files_only=True,
+            attn_implementation="eager",
+        )
+    except Exception:
+        print("❌ Failed to load base model.")
+        traceback.print_exc()
+        shutil.rmtree(patched_base, ignore_errors=True)
+        raise
+    print("   ✅ SinLLaMA base loaded.")
+    print()
+    print("🔹 Loading style rewriter adapter...")
+    try:
+        from peft import PeftModel
+        model = PeftModel.from_pretrained(model, ADAPTER_PATH, is_trainable=False)
+    except Exception:
+        print("❌ Failed to load LoRA adapter.")
+        traceback.print_exc()
+        shutil.rmtree(patched_base, ignore_errors=True)
+        raise
+    print("   ✅ LoRA adapter loaded.")
+    model.eval()
+    try:
+        model = FastLanguageModel.for_inference(model)
+        print("   ✅ Unsloth inference optimization enabled.")
+    except Exception as e:
+        print(f"   ⚠️ Could not enable Unsloth inference mode: {e}")
+    return model, tokenizer, patched_base
+
+
+# ============================================================
+# LOAD DATASET  (unchanged)
+# ============================================================
+
+def load_dataset():
+    print()
+    print(f"📂 Loading dataset: {DATASET_PATH}")
+    if not os.path.exists(DATASET_PATH):
+        raise FileNotFoundError(f"Dataset not found: {DATASET_PATH}")
+    records = []
+    with open(DATASET_PATH, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
-                raw_records.append(json.loads(line))
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    print(f"   ✅ Loaded {len(records):,} records.")
+    return records
 
-    converted = []
-    for rec in raw_records:
-        c = convert_generated_record(rec)
-        if c is not None:
-            converted.append(c)
 
-    print(f"   Raw records: {len(raw_records)} -> valid after conversion/QC: {len(converted)}")
+def get_article_text(record):
+    return (record.get("content") or record.get("input") or record.get("article") or "").strip()
 
-    # Article-level split by url - must match train_style_rewriter.py's
-    # logic exactly (same seed, same ratio) so this is a true held-out set.
+
+def get_style(record):
+    return (
+        record.get("style") or
+        record.get("style_id") or
+        record.get("metadata", {}).get("style_id") or ""
+    )
+
+
+def get_reference_text(record):
+    return (
+        record.get("rewritten_text") or
+        record.get("output") or
+        record.get("corrected_text") or ""
+    ).strip()
+
+
+def get_unique_articles(records):
+    articles = {}
+    for record in records:
+        article = get_article_text(record)
+        if not article:
+            continue
+        url = record.get("url") or record.get("metadata", {}).get("url")
+        key = url if url else article[:200]
+        if key not in articles:
+            articles[key] = {"article": article, "record": record, "url": url}
+    return list(articles.values())
+
+
+# ============================================================
+# BUILD PROMPT  (unchanged from original v12)
+# ============================================================
+
+def build_prompt(article: str, style_id: str):
+    style_rules = STYLE_RULES.get(style_id, "")
+    return (
+        "### Instruction:\n"
+        f"{style_rules}\n\n"
+        "### GLOBAL REQUIREMENTS:\n"
+        f"{GLOBAL_RULES}\n\n"
+        "### INPUT ARTICLE:\n"
+        f"{article}\n\n"
+        "### RESPONSE:\n"
+    )
+
+
+# ============================================================
+# GENERATE
+# ============================================================
+
+@torch.inference_mode()
+def generate_style(model, tokenizer, article: str, style_id: str):
+
+    prompt = build_prompt(article, style_id)
+
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=MAX_SEQ_LENGTH,
+        padding=False,
+    )
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+    # ✅ FIXED: scale max_new_tokens with article length instead of flat 1024.
+    # A flat 1024 truncated longer articles mid-sentence — same bug fixed
+    # twice in earlier test scripts. The floor/ceiling bounds keep it sane.
+    word_count = len(article.split())
+    max_new_tokens = int(
+        max(GEN_MAX_NEW_TOKENS_FLOOR,
+            min(GEN_MAX_NEW_TOKENS_CEILING,
+                word_count * GEN_TOKENS_PER_WORD_MULTIPLIER))
+    )
+
+    output_ids = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        temperature=GEN_TEMPERATURE,
+        top_p=GEN_TOP_P,
+        top_k=GEN_TOP_K,
+        repetition_penalty=GEN_REPETITION_PENALTY,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.pad_token_id,
+        use_cache=True,
+    )
+
+    input_length = inputs["input_ids"].shape[1]
+    generated_ids = output_ids[0, input_length:]
+    generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    return generated_text.strip()
+
+
+# ============================================================
+# CLEAN OUTPUT
+# ============================================================
+
+def clean_output(text):
+    if not text:
+        return ""
+
+    # Remove accidental prompt headers
+    for prefix in ["### Response:", "### Output:", "Response:", "Output:"]:
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+
+    # Stop if model starts generating another section
+    for marker in ["### Instruction:", "### INPUT ARTICLE:", "### Input:", "### GLOBAL REQUIREMENTS:"]:
+        if marker in text:
+            text = text.split(marker, 1)[0].strip()
+
+    # ✅ NEW: strip .। danda artifact (Devanagari full stop appearing after
+    # a Sinhala sentence-ending period — model sometimes emits this,
+    # possibly learned from training data that had it).
+    text = re.sub(r'\.।\s*', '. ', text)
+    text = re.sub(r'।\s*', ' ', text)
+
+    # Remove stray markdown
+    text = re.sub(r'^[#\*\-\>].*$', '', text, flags=re.MULTILINE)
+
+    return text.strip()
+
+
+# ============================================================
+# DISPLAY RESULT
+# ============================================================
+
+def display_result(article, output, style_id, metrics=None):
+    print()
+    print("=" * 80)
+    print(f"STYLE: {style_id}")
+    print("=" * 80)
+    print()
+    print("SOURCE ARTICLE")
+    print("-" * 80)
+    print(article)
+    print()
+    print("REWRITTEN ARTICLE")
+    print("-" * 80)
+    print(output)
+    print()
+    print(f"Source characters : {len(article):,}")
+    print(f"Output characters : {len(output):,}")
+    if len(article) > 0:
+        print(f"Length ratio      : {len(output)/len(article):.2f}")
+    if metrics:
+        print()
+        print("EVALUATION METRICS")
+        print("-" * 40)
+        print(f"  ROUGE-1 F1        : {metrics['rouge_1_f1']:.4f}")
+        print(f"  ROUGE-2 F1        : {metrics['rouge_2_f1']:.4f}")
+        print(f"  BLEU (smoothed)   : {metrics['bleu']:.4f}")
+        print(f"  Cosine similarity : {metrics['cosine']:.4f}")
+        print(f"  Length ratio      : {metrics['length_ratio']:.3f}")
+        print(f"  Length preserv.   : {metrics['length_preservation']:.4f}")
+        print(f"  Entity preserv.   : {metrics['entity_preservation']:.4f}")
+        print(f"  Missing entities  : {metrics['missing_count']}")
+        print(f"  New fact signals  : {metrics['new_fact_count']}")
+        print(f"  Overall score     : {metrics['overall']:.4f}  ({metrics['overall']*100:.2f}%)")
+        if metrics.get("missing_entities"):
+            print(f"  ⚠️ Missing: {', '.join(metrics['missing_entities'][:12])}")
+        if metrics.get("new_fact_candidates"):
+            print(f"  ⚠️ New fact signals: {', '.join(metrics['new_fact_candidates'][:12])}")
+    print("=" * 80)
+
+
+# ============================================================
+# SAVE RESULT
+# ============================================================
+
+def save_result(article, outputs, output_path):
+    result = {"source_article": article, "styles": outputs}
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print()
+    print(f"💾 Results saved to: {output_path}")
+
+
+# ============================================================
+# INTERACTIVE MODE  (unchanged flow from original v12)
+# ============================================================
+
+def select_article(articles):
+    if not articles:
+        raise RuntimeError("No valid articles found in dataset.")
+    print()
+    print("=" * 80)
+    print("AVAILABLE ARTICLES")
+    print("=" * 80)
+    display_count = min(20, len(articles))
+    for i in range(display_count):
+        preview = articles[i]["article"].replace("\n", " ").strip()
+        if len(preview) > 100:
+            preview = preview[:100] + "..."
+        print(f"[{i+1:02d}] {preview}")
+    print()
+    choice = input(f"Select article [1-{display_count}] (default 1): ").strip()
+    try:
+        index = int(choice) - 1 if choice else 0
+    except ValueError:
+        index = 0
+    if index < 0 or index >= display_count:
+        index = 0
+    return articles[index]["article"]
+
+
+def select_styles():
+    print()
+    print("=" * 80)
+    print("STYLE SELECTION")
+    print("=" * 80)
+    print("1. Formal News")
+    print("2. Editorial")
+    print("3. Sports")
+    print("4. Youth")
+    print("5. Feature")
+    print("6. ALL STYLES")
+    print()
+    choice = input("Select style [1-6] (default 6): ").strip() or "6"
+    mapping = {
+        "1": ["style_1_formal_news"],
+        "2": ["style_2_editorial"],
+        "3": ["style_3_sports"],
+        "4": ["style_4_youth"],
+        "5": ["style_5_feature"],
+        "6": list(STYLE_IDS),
+    }
+    return mapping.get(choice, mapping["6"])
+
+
+def run_interactive(model, tokenizer, records):
+    articles = get_unique_articles(records)
+    print(f"\n   Unique source articles: {len(articles):,}")
+    article = select_article(articles)
+    styles = select_styles()
+    outputs = {}
+    print()
+    print("=" * 80)
+    print("🚀 GENERATION STARTED")
+    print("=" * 80)
+    for style_id in styles:
+        print(f"\n🔹 Generating: {style_id}")
+        try:
+            output = clean_output(generate_style(model, tokenizer, article, style_id))
+            outputs[style_id] = output
+            metrics = evaluate(article, output, reference=None)
+            display_result(article, output, style_id, metrics)
+        except Exception as e:
+            print(f"❌ Generation failed for {style_id}: {type(e).__name__}: {e}")
+            traceback.print_exc()
+    if outputs:
+        save_result(article, outputs, "/home/jovyan/work/sinllama/test_results_v13.json")
+
+
+# ============================================================
+# BATCH EVALUATION MODE
+# ============================================================
+
+def run_batch_eval(model, tokenizer, records, n=BATCH_EVAL_N):
+    """
+    Evaluate N articles × all 5 styles.
+
+    IMPORTANT:
+      - Reference-based metrics compare generated output with the dataset's
+        human/reference rewrite for that style.
+      - Factual preservation is ALWAYS checked against the original source.
+      - Articles with all 5 style references are preferred.
+    """
+    print()
+    print("=" * 80)
+    print(f"🧪 BATCH EVALUATION — {n} articles × 5 styles = {n*5} test cases")
+    print("=" * 80)
+
+    # Group records by URL (fallback to source prefix).
     by_url = {}
-    for rec in converted:
-        url = rec["metadata"].get("url") or id(rec)
+    for rec in records:
+        url = rec.get("url") or get_article_text(rec)[:200]
         by_url.setdefault(url, []).append(rec)
 
-    urls = list(by_url.keys())
-    random.seed(seed)
-    random.shuffle(urls)
-    n_train_urls = int(len(urls) * split_ratio)
-    val_urls = set(urls[n_train_urls:])
-
-    # ✅ NEW: only keep articles that (a) have all 5 styles present in the
-    # held-out set and (b) are at least min_words words long, then rank
-    # by length and take the N longest that qualify.
-    qualifying_groups = []
-    for url in val_urls:
-        rows = by_url[url]
-        styles_present = {r["metadata"]["style_id"] for r in rows}
-        if styles_present != STYLE_IDS:
+    qualifying = []
+    for url, recs in by_url.items():
+        article = get_article_text(recs[0])
+        if not article:
             continue
-        word_count = len(rows[0]["input"].split())
-        if word_count >= min_words:
-            qualifying_groups.append((word_count, url, rows))
 
-    qualifying_groups.sort(key=lambda g: g[0], reverse=True)
-    selected = qualifying_groups[:n_articles]
+        styles_present = {
+            get_style(rec)
+            for rec in recs
+            if get_style(rec) in STYLE_IDS and get_reference_text(rec)
+        }
 
-    print(f"   Articles with all 5 styles AND >= {min_words} words: {len(qualifying_groups)}")
-    print(f"   Selected {len(selected)} article(s) (word counts: "
-          f"{[g[0] for g in selected]})")
+        # Prefer complete 5-style articles, then longer articles.
+        complete = len(styles_present) == len(STYLE_IDS)
+        qualifying.append(
+            (complete, len(styles_present), len(article.split()), url, recs)
+        )
 
+    qualifying.sort(reverse=True)
+
+    selected = qualifying[:n]
     if not selected:
-        print(f"   ⚠️  No article in the held-out set meets the {min_words}-word "
-              f"minimum with all 5 styles present. Lower min_words or check "
-              f"your dataset.")
+        print("⚠️ No articles found for batch evaluation.")
+        return
 
-    val_records = []
-    for _, _, rows in selected:
-        # Keep a stable style order per article for readability in output
-        rows_sorted = sorted(rows, key=lambda r: r["metadata"]["style_id"])
-        val_records.extend(rows_sorted)
+    all_scores = []
+    scores_by_style = {s: [] for s in STYLE_IDS}
+    entity_scores_by_style = {s: [] for s in STYLE_IDS}
+    missing_by_style = {s: [] for s in STYLE_IDS}
+    hallucination_by_style = {s: [] for s in STYLE_IDS}
 
-    return val_records
+    for idx, (_, style_count, _, url, recs) in enumerate(selected, 1):
+        article = get_article_text(recs[0])
 
-print("\n📂 Loading test dataset...")
-# ✅ FIXED: min_words was 150 but the cleaned dataset's held-out articles
-# with all 5 styles max out at ~121 words, so 150 selected 0 articles.
-# Lowered to 40 and increased n_articles to 20 to use most qualifying articles.
-test_records = load_test_data(n_articles=20, min_words=40)
-print(f"   Using {len(test_records)} samples for evaluation "
-      f"({len(test_records) // len(STYLE_IDS)} articles × 5 styles).")
+        print(f"\n{'─'*80}")
+        print(f"Article {idx}/{len(selected)} | reference styles: {style_count}/5")
+        print(f"Words: {len(article.split())}")
+        print(f"Preview: {article[:120]}...")
 
-# ──────────────────────────────────────────────
-# RUN TESTS WITH METRICS
-# ──────────────────────────────────────────────
-print("\n" + "=" * 80)
-print("  STYLE REWRITER TESTING & EVALUATION")
-print("=" * 80)
+        ref_by_style = {}
+        for rec in recs:
+            sid = get_style(rec)
+            ref = get_reference_text(rec)
+            if sid in STYLE_IDS and ref:
+                ref_by_style[sid] = ref
 
-all_metrics = []
+        for style_id in sorted(STYLE_IDS):
+            try:
+                output = clean_output(
+                    generate_style(model, tokenizer, article, style_id)
+                )
 
-for idx, item in enumerate(test_records, 1):
-    article_num = (idx - 1) // len(STYLE_IDS) + 1
-    style_num_in_article = (idx - 1) % len(STYLE_IDS) + 1
-    print(f"\n{'=' * 80}")
-    print(f"📄 ARTICLE {article_num} / {len(test_records) // len(STYLE_IDS)}"
-          f"  —  STYLE {style_num_in_article} / {len(STYLE_IDS)}"
-          f"  (test case {idx}/{len(test_records)})")
+                reference = ref_by_style.get(style_id)
+
+                m = evaluate(
+                    source=article,
+                    generated=output,
+                    reference=reference
+                )
+
+                all_scores.append(m["overall"])
+                scores_by_style[style_id].append(m["overall"])
+                entity_scores_by_style[style_id].append(
+                    m["entity_preservation"]
+                )
+                missing_by_style[style_id].append(m["missing_count"])
+                hallucination_by_style[style_id].append(
+                    m["new_fact_count"]
+                )
+
+                ref_label = "reference" if reference else "source"
+
+                status = "PASS"
+                if m["entity_preservation"] < FACT_ENTITY_PRESERVATION_TARGET:
+                    status = "FACT-LOSS"
+                if m["new_fact_count"] > 0:
+                    status = "HALLUCINATION-SIGNAL"
+
+                print(
+                    f"  {style_id:<25} "
+                    f"score={m['overall']*100:6.1f}% "
+                    f"R1={m['rouge_1_f1']:.3f} "
+                    f"R2={m['rouge_2_f1']:.3f} "
+                    f"BLEU={m['bleu']:.3f} "
+                    f"cos={m['cosine']:.3f} "
+                    f"LP={m['length_preservation']:.3f} "
+                    f"facts={m['entity_preservation']:.3f} "
+                    f"missing={m['missing_count']} "
+                    f"new={m['new_fact_count']} "
+                    f"[{ref_label}] "
+                    f"→ {status}"
+                )
+
+                if m["missing_entities"]:
+                    print(
+                        "      Missing: "
+                        + ", ".join(m["missing_entities"][:10])
+                    )
+
+                if m["new_fact_candidates"]:
+                    print(
+                        "      New fact signals: "
+                        + ", ".join(m["new_fact_candidates"][:10])
+                    )
+
+            except Exception as e:
+                print(
+                    f"  ❌ {style_id}: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    print()
     print("=" * 80)
-    print("\n📝 ORIGINAL ARTICLE:")
-    print(item["input"][:250] + "...")
-    
-    test_case_metrics = {'test_case': idx}
-    
-    # Extract style name from metadata
-    style_id = item.get("metadata", {}).get("style_id", "")
-    if "formal" in style_id: style_name = "formal"
-    elif "editorial" in style_id: style_name = "editorial"
-    elif "sports" in style_id: style_name = "sports"
-    elif "youth" in style_id: style_name = "youth"
-    elif "feature" in style_id: style_name = "feature"
-    else: style_name = "formal" # fallback
-    
-    print(f"\n{'─' * 80}")
-    print(f"🎨 STYLE: {style_name.upper()}")
-    print("─" * 80)
-    
-    instruction = item["instruction"]
-    reference = item["output"]
-    
-    rewritten = rewrite_in_style(item["input"], instruction)
-    
-    print(f"\n✨ REWRITTEN OUTPUT:")
-    print(rewritten[:250] + "...")
-    
-    metrics = evaluate_generation(
-        original=item["input"],
-        generated=rewritten,
-        reference=reference,
-        style_name=style_name
+    print("📊 AGGREGATE RESULTS")
+    print("=" * 80)
+    print()
+    print(
+        f"{'Style':<25} "
+        f"{'Score':>9} "
+        f"{'Facts':>9} "
+        f"{'Missing':>9} "
+        f"{'New':>9} "
+        f"{'N':>5}"
     )
-    
-    test_case_metrics[style_name] = metrics
-    
-    print(f"\n📊 EVALUATION METRICS:")
-    print(f"  ROUGE-1 F1 Score:        {metrics.get('ROUGE-1_f1', 0):.4f}")
-    print(f"  ROUGE-2 F1 Score:        {metrics.get('ROUGE-2_f1', 0):.4f}")
-    print(f"  BLEU Score:              {metrics.get('BLEU', 0):.4f}")
-    print(f"  Cosine Similarity:       {metrics.get('cosine_similarity', 0):.4f}")
-    print(f"  Length Preservation:     {metrics.get('length_preservation', 0):.4f}")
-    print(f"  Vocabulary Diversity:    {metrics.get('vocabulary_diversity', 0):.4f}")
-    print(f"  Overall Quality Score:   {metrics.get('overall_quality_score', 0):.4f}")
-    
-    # Style-specific metrics
-    if style_name == 'youth' and 'conversational_markers' in metrics:
-        print(f"  Conversational Markers:  {'✅' if metrics['conversational_markers'] else '❌'}")
-    elif style_name == 'sports' and 'action_language' in metrics:
-        print(f"  Action Language:         {'✅' if metrics['action_language'] else '❌'}")
-    elif style_name == 'editorial' and 'analytical_depth' in metrics:
-        print(f"  Analytical Depth:        {'✅' if metrics['analytical_depth'] else '❌'}")
-    elif style_name == 'feature' and 'narrative_elements' in metrics:
-        print(f"  Narrative Elements:      {'✅' if metrics['narrative_elements'] else '❌'}")
-    elif style_name == 'formal' and 'objective_tone' in metrics:
-        print(f"  Objective Tone:          {'✅' if metrics['objective_tone'] else '❌'}")
-    
-    all_metrics.append(test_case_metrics)
+    print("-" * 75)
 
-# ──────────────────────────────────────────────
-# AGGREGATE METRICS SUMMARY
-# ──────────────────────────────────────────────
-print("\n" + "=" * 80)
-print("  📈 AGGREGATE METRICS SUMMARY")
-print("=" * 80)
+    for style_id in sorted(STYLE_IDS):
+        vals = scores_by_style[style_id]
+        facts = entity_scores_by_style[style_id]
+        miss = missing_by_style[style_id]
+        new = hallucination_by_style[style_id]
 
-# Collect all metrics across test cases
-metric_keys = ['ROUGE-1_f1', 'ROUGE-2_f1', 'BLEU', 'cosine_similarity', 
-               'length_preservation', 'vocabulary_diversity', 'overall_quality_score']
+        if vals:
+            print(
+                f"{style_id:<25} "
+                f"{np.mean(vals)*100:8.2f}% "
+                f"{np.mean(facts)*100:8.2f}% "
+                f"{np.mean(miss):9.2f} "
+                f"{np.mean(new):9.2f} "
+                f"{len(vals):5d}"
+            )
+        else:
+            print(
+                f"{style_id:<25} "
+                f"{'N/A':>9} {'N/A':>9} {'N/A':>9} {'N/A':>9} {'0':>5}"
+            )
 
-overall_quality_scores = []
+    print("-" * 75)
 
-for key in metric_keys:
-    values = []
-    for test_case in all_metrics:
-        for style, metrics in test_case.items():
-            if isinstance(metrics, dict) and key in metrics:
-                values.append(metrics[key])
-                if key == 'overall_quality_score':
-                    overall_quality_scores.append(metrics[key])
-    
-    if values:
-        avg = np.mean(values)
-        std = np.std(values)
-        min_val = np.min(values)
-        max_val = np.max(values)
-        
-        print(f"\n{key}:")
-        print(f"  Average: {avg:.4f} ± {std:.4f}")
-        print(f"  Min: {min_val:.4f} | Max: {max_val:.4f}")
+    if all_scores:
+        overall = np.mean(all_scores) * 100
+        print(
+            f"{'OVERALL SCORE':<25} "
+            f"{overall:8.2f}%"
+        )
 
-# Calculate Accuracy Percentage based on Overall Quality Score
-accuracy_percentage = np.mean(overall_quality_scores) * 100 if overall_quality_scores else 0
+    print("=" * 80)
 
-# Per-style summary
-print("\n" + "=" * 80)
-print("  📊 PER-STYLE PERFORMANCE")
-print("=" * 80)
+    report_path = "/home/jovyan/work/sinllama/batch_eval_v13.json"
 
-for style_name in STYLE_INSTRUCTIONS.keys():
-    style_scores = []
-    for test_case in all_metrics:
-        if style_name in test_case and isinstance(test_case[style_name], dict):
-            style_scores.append(test_case[style_name].get('overall_quality_score', 0))
-    
-    if style_scores:
-        avg_score = np.mean(style_scores)
-        print(f"\n{style_name.upper()}: {avg_score:.4f} (avg quality score)")
+    report = {
+        "version": "v13",
+        "n_articles": len(selected),
+        "n_test_cases": len(all_scores),
+        "overall_score_pct": (
+            float(np.mean(all_scores) * 100)
+            if all_scores else 0
+        ),
+        "targets": {
+            "entity_preservation": FACT_ENTITY_PRESERVATION_TARGET,
+            "length_ratio_min": LENGTH_RATIO_MIN,
+            "length_ratio_max": LENGTH_RATIO_MAX,
+        },
+        "per_style": {}
+    }
 
-print("\n" + "=" * 80)
-print(f"  🎯 ACCURACY PERCENTAGE: {accuracy_percentage:.2f}%")
-print("=" * 80)
+    for style_id in sorted(STYLE_IDS):
+        vals = scores_by_style[style_id]
+        facts = entity_scores_by_style[style_id]
+        miss = missing_by_style[style_id]
+        new = hallucination_by_style[style_id]
 
-# Save metrics to file
-metrics_output_file = 'test_metrics_results.json'
-with open(metrics_output_file, 'w', encoding='utf-8') as f:
-    json.dump(all_metrics, f, ensure_ascii=False, indent=2)
+        report["per_style"][style_id] = {
+            "avg_score_pct": float(np.mean(vals) * 100) if vals else None,
+            "avg_entity_preservation_pct": (
+                float(np.mean(facts) * 100) if facts else None
+            ),
+            "avg_missing_entities": float(np.mean(miss)) if miss else None,
+            "avg_new_fact_signals": float(np.mean(new)) if new else None,
+            "n": len(vals),
+        }
 
-print(f"\n✅ Testing complete!")
-print(f"📄 Detailed metrics saved to: {metrics_output_file}\n")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+
+    print(f"\n💾 Report saved to: {report_path}")
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    # Determine mode: python test_style_rewriter_v13.py --batch
+    batch_mode = "--batch" in sys.argv
+
+    print()
+    print("=" * 80)
+    print("  SinhalaJournal-LLM | Style Rewriter Test v13")
+    print(f"  Mode: {'BATCH EVALUATION' if batch_mode else 'INTERACTIVE'}")
+    print("=" * 80)
+
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+
+    # Check paths
+    for label, path in [("Base model", BASE_MODEL), ("Adapter", ADAPTER_PATH), ("Dataset", DATASET_PATH)]:
+        if os.path.exists(path):
+            print(f"   ✅ {label} found")
+        else:
+            print(f"   ❌ {label} NOT found: {path}")
+            return
+
+    records = load_dataset()
+    patched_base = None
+
+    try:
+        model, tokenizer, patched_base = load_model()
+    except Exception as e:
+        print(f"\n❌ Model loading failed: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return
+
+    try:
+        if batch_mode:
+            run_batch_eval(model, tokenizer, records, n=BATCH_EVAL_N)
+        else:
+            run_interactive(model, tokenizer, records)
+    finally:
+        if patched_base is not None:
+            shutil.rmtree(patched_base, ignore_errors=True)
+            print("\n🧹 Temporary tokenizer directory removed.")
+
+    print()
+    print("=" * 80)
+    print("✅ COMPLETE")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
