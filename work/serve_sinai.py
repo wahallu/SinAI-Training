@@ -380,6 +380,55 @@ def is_local_mt5_path(path: str) -> bool:
     return path != MT5_HUB_FALLBACK_ID
 
 
+_MT5_SPECIAL_TOKENS_PATCHED = False
+
+
+def _patch_t5_special_tokens_bug():
+    """Works around a transformers-internal bug confirmed via a live
+    traceback on the GPU server (2026-08-21):
+
+        AttributeError: 'list' object has no attribute 'keys'
+        at tokenization_utils_base.py, _set_model_specific_special_tokens()
+        self.SPECIAL_TOKENS_ATTRIBUTES = self.SPECIAL_TOKENS_ATTRIBUTES + list(special_tokens.keys())
+
+    T5/mT5's fast tokenizer passes its standard <extra_id_N> sentinel
+    tokens (a list, via the legacy `additional_special_tokens` kwarg) into
+    PreTrainedTokenizerBase.__init__, which is supposed to route list
+    values to `self._extra_special_tokens = list(value)` and only route
+    dict values into _set_model_specific_special_tokens(). The transformers
+    version installed on this GPU box is missing that isinstance() branch
+    (verified fixed in transformers 5.15.1's __init__, which guards this
+    exact call with `isinstance(value, dict)` — the installed version
+    apparently predates that guard) and calls
+    _set_model_specific_special_tokens() unconditionally, crashing on
+    `.keys()` for the list case.
+
+    _set_model_specific_special_tokens() itself only exists to register
+    named model-specific tokens (e.g. an `image_token` for multimodal
+    models) — mT5 has none, so coercing a non-dict argument to `{}` here is
+    a safe no-op for it. It does not touch the separate, correctly-list-
+    handled sentinel-token path. Scoped to the mT5 code path only (applied
+    lazily on first mT5 use) so it can't affect the already-working
+    SinLLaMA/LLaMA tokenizer, which never hits this method with a bad type.
+    """
+    global _MT5_SPECIAL_TOKENS_PATCHED
+    if _MT5_SPECIAL_TOKENS_PATCHED:
+        return
+    try:
+        from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+        original = PreTrainedTokenizerBase._set_model_specific_special_tokens
+
+        def _safe_set_model_specific_special_tokens(self, special_tokens):
+            if not isinstance(special_tokens, dict):
+                special_tokens = {}
+            return original(self, special_tokens)
+
+        PreTrainedTokenizerBase._set_model_specific_special_tokens = _safe_set_model_specific_special_tokens
+        _MT5_SPECIAL_TOKENS_PATCHED = True
+    except Exception as exc:
+        print(f"[WARN] Could not apply T5 special-tokens compatibility patch: {type(exc).__name__}: {exc}")
+
+
 _MT5_BASE_MODEL = None
 _MT5_TOKENIZER = None
 _MT5_LOADED_ADAPTERS = {}
@@ -401,6 +450,7 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
                       f"network egress and will fail in a sandboxed/offline environment.")
             try:
                 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+                _patch_t5_special_tokens_bug()
                 # local_files_only mirrors the main SinLLaMA tokenizer's load
                 # (see `tokenizer = AutoTokenizer.from_pretrained(model_path,
                 # local_files_only=True)` above) for the local-path case, so a
