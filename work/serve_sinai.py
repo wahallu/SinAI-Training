@@ -16,6 +16,7 @@ import unicodedata
 from collections import Counter
 
 import re
+import traceback
 
 from task_registry import TASKS, VALID_STYLES, DEFAULT_STYLE
 
@@ -348,14 +349,22 @@ _MT5_TOKENIZER = None
 _MT5_LOCK = threading.Lock()
 
 
+MT5_HUB_FALLBACK_ID = "google/mt5-base"
+
+
 def get_mt5_path() -> str:
+    """Returns a local mT5-base directory if one is found on disk, otherwise
+    the bare Hub repo id MT5_HUB_FALLBACK_ID. Callers must check
+    `is_local_mt5_path()` before deciding whether it's safe to pass
+    local_files_only=True — the Hub id is not a directory and needs network
+    access to resolve."""
     candidates = [
         "/home/jovyan/summarizer/models/mt5-base",
         "/home/jovyan/work/summarizer/models/mt5-base",
         "/home/jovyan/work/sinllama/models/mt5-base",
         os.path.abspath(os.path.join(os.path.dirname(__file__), "../summarizer/models/mt5-base")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "models/mt5-base")),
-        "google/mt5-base",
+        MT5_HUB_FALLBACK_ID,
     ]
     for path in candidates:
         if os.path.exists(path) and (
@@ -364,7 +373,11 @@ def get_mt5_path() -> str:
             or os.path.isfile(os.path.join(path, "pytorch_model.bin"))
         ):
             return path
-    return candidates[0]
+    return MT5_HUB_FALLBACK_ID
+
+
+def is_local_mt5_path(path: str) -> bool:
+    return path != MT5_HUB_FALLBACK_ID
 
 
 _MT5_BASE_MODEL = None
@@ -376,18 +389,39 @@ _MT5_LOCK = threading.Lock()
 def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
     global _MT5_BASE_MODEL, _MT5_TOKENIZER, _MT5_LOADED_ADAPTERS
     mt5_path = get_mt5_path()
+    is_local = is_local_mt5_path(mt5_path)
 
     with _MT5_LOCK:
         if _MT5_BASE_MODEL is None or _MT5_TOKENIZER is None:
-            print(f"[INFO] Initializing raw mT5-base model from: {mt5_path}")
-            from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-            _MT5_TOKENIZER = AutoTokenizer.from_pretrained(mt5_path)
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            _MT5_BASE_MODEL = AutoModelForSeq2SeqLM.from_pretrained(
-                mt5_path,
-                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-            ).to(device)
-            _MT5_BASE_MODEL.eval()
+            if is_local:
+                print(f"[INFO] Initializing raw mT5-base model from local path: {mt5_path}")
+            else:
+                print(f"[WARN] No local mT5-base checkpoint found under any known path — "
+                      f"falling back to a live Hub download of '{mt5_path}'. This needs "
+                      f"network egress and will fail in a sandboxed/offline environment.")
+            try:
+                from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+                # local_files_only mirrors the main SinLLaMA tokenizer's load
+                # (see `tokenizer = AutoTokenizer.from_pretrained(model_path,
+                # local_files_only=True)` above) for the local-path case, so a
+                # bad/partial local checkpoint fails fast and clearly instead
+                # of silently behaving like a Hub id. Only the Hub-fallback
+                # path is allowed to reach the network.
+                _MT5_TOKENIZER = AutoTokenizer.from_pretrained(mt5_path, local_files_only=is_local)
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                _MT5_BASE_MODEL = AutoModelForSeq2SeqLM.from_pretrained(
+                    mt5_path,
+                    torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                    local_files_only=is_local,
+                ).to(device)
+                _MT5_BASE_MODEL.eval()
+            except Exception as exc:
+                # Leave nothing half-initialized so the next request retries
+                # the load from scratch instead of getting stuck.
+                _MT5_TOKENIZER = None
+                _MT5_BASE_MODEL = None
+                traceback.print_exc()
+                raise RuntimeError(f"[mt5:load from {mt5_path}] {type(exc).__name__}: {exc}") from exc
 
         target_model = _MT5_BASE_MODEL
         discovered = discover_adapters()
@@ -403,7 +437,11 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
                     peft_mt5.eval()
                     _MT5_LOADED_ADAPTERS[active_adapter] = peft_mt5
                 except Exception as exc:
-                    print(f"[ERROR] Failed loading PEFT LoRA for mT5 ({active_adapter}): {exc}")
+                    # Logged with a traceback (previously silent) but still
+                    # not re-raised: falling back to base mT5 weights for
+                    # this adapter is preferable to hard-failing the request.
+                    print(f"[ERROR] Failed loading PEFT LoRA for mT5 ({active_adapter}): {type(exc).__name__}: {exc}")
+                    traceback.print_exc()
 
             if active_adapter in _MT5_LOADED_ADAPTERS:
                 target_model = _MT5_LOADED_ADAPTERS[active_adapter]
@@ -417,21 +455,26 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
             else contextlib.nullcontext()
         )
 
-    input_text = "summarize: " + raw_text
-    device = next(target_model.parameters()).device
-    inputs = _MT5_TOKENIZER(input_text, return_tensors="pt", truncation=True, max_length=512).to(device)
+    try:
+        input_text = "summarize: " + raw_text
+        device = next(target_model.parameters()).device
+        inputs = _MT5_TOKENIZER(input_text, return_tensors="pt", truncation=True, max_length=512).to(device)
 
-    with torch.no_grad(), adapter_ctx:
-        outputs = target_model.generate(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs.get("attention_mask"),
-            max_length=180,
-            num_beams=4,
-            length_penalty=2.0,
-            early_stopping=True,
-        )
+        with torch.no_grad(), adapter_ctx:
+            outputs = target_model.generate(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs.get("attention_mask"),
+                max_length=180,
+                num_beams=4,
+                length_penalty=2.0,
+                early_stopping=True,
+            )
 
-    summary = _MT5_TOKENIZER.decode(outputs[0], skip_special_tokens=True).strip()
+        summary = _MT5_TOKENIZER.decode(outputs[0], skip_special_tokens=True).strip()
+    except Exception as exc:
+        traceback.print_exc()
+        raise RuntimeError(f"[mt5:generate adapter={active_adapter}] {type(exc).__name__}: {exc}") from exc
+
     from tasks.summarizer import heal_sinhala_text
     summary = heal_sinhala_text(summary)
 
@@ -484,18 +527,24 @@ def run_generation(
 
     spec = TASKS.get(task_name, TASKS["grammar"])
 
-    # For the summarizer task, if the caller didn't specify a length, infer
-    # one from the actual adapter being used: v06+ has no "bare" prompt mode
-    # in its training data (see SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION
-    # above), so leaving length unset would send it the legacy v02-v05
-    # instruction it never saw. v02-v05 have no such requirement and keep
-    # the old behavior unchanged (length=None -> legacy fixed-instruction
-    # line, via tasks/summarizer.py's default).
+    # For the summarizer task, resolve the length against what the specific
+    # adapter was actually trained on: v06+ has no "bare" prompt mode in its
+    # training data (see SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION above),
+    # so leaving length unset would send it the legacy v02-v05 instruction it
+    # never saw -> default it to "medium". v02-v05 (and "base") never saw a
+    # length line at all, so an explicit length coming from /compare (e.g. a
+    # user testing short/medium/long against a mixed adapter selection) must
+    # NOT leak into their prompt -> force it back to None (legacy
+    # fixed-instruction line, via tasks/summarizer.py's default) regardless
+    # of what was requested.
     effective_length = length
-    if task_name == "summarizer" and effective_length is None:
+    if task_name == "summarizer":
         folder_name = _summarizer_adapter_folder_name(active_adapter)
-        if get_adapter_version(folder_name) >= SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION:
+        is_length_conditioned = get_adapter_version(folder_name) >= SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION
+        if effective_length is None and is_length_conditioned:
             effective_length = "medium"
+        elif effective_length is not None and not is_length_conditioned:
+            effective_length = None
 
     full_prompt = build_prompt(task_name, raw_text, style, effective_length)
     inputs      = tokenizer(full_prompt, return_tensors="pt").to("cuda")
@@ -1018,7 +1067,13 @@ async def compare_models(req: CompareRequest):
             output_tokens = gen["output_tokens"]
 
         except Exception as e:
-            output_text = f"Inference Error: {str(e)}"
+            # Full traceback goes to the server log only (the response would
+            # otherwise leak internal paths/stack frames to the admin UI);
+            # the exception's own type name is included in what's returned
+            # so "Inference Error: ..." is at least actionable at a glance.
+            print(f"[ERROR] /compare inference failed for adapter '{adapter_name}' (task={req.task}):")
+            traceback.print_exc()
+            output_text = f"Inference Error: {type(e).__name__}: {e}"
             input_tokens = 0
             output_tokens = 0
 
