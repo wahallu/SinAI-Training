@@ -1,1147 +1,1723 @@
-# ============================================================
-# SinhalaJournal-LLM | Style Rewriter Test v13
-# ============================================================
-# Changes from original v12:
-#   - max_new_tokens now scales with article length (was flat 1024)
-#   - clean_output strips .। danda artifact
-#   - Added evaluation metrics (ROUGE-1/2, BLEU, cosine, length ratio)
-#   - Added batch eval mode: run on N articles, report aggregate accuracy
-#   - STYLE_RULES, GLOBAL_RULES, build_prompt unchanged
-# ============================================================
-
-from unsloth import FastLanguageModel
+# ================================================================
+# SinhalaJournal-LLM
+# STYLE ADAPTER CORRECTNESS TEST
+#
+# Purpose:
+#   Same article -> 5 different styles
+#   Evaluate factual correctness of each rewrite
+#
+# IMPORTANT:
+#   This test is NOT measuring whether the rewrite is stylistically
+#   beautiful. It measures whether the original facts are preserved.
+#
+#   5 outputs only:
+#       1. Formal News
+#       2. Editorial
+#       3. Sports
+#       4. Youth
+#       5. Feature
+#
+# Tokenizer:
+#   Explicit LlamaTokenizerFast loading.
+#   This avoids the Unsloth TokenizersBackend error.
+# ================================================================
 
 import os
-import sys
+import re
 import json
-import shutil
-import tempfile
-import traceback
+import math
+import difflib
 from pathlib import Path
 from collections import Counter
 
-import re
-import unicodedata
 import torch
-import numpy as np
 
-from transformers import LlamaTokenizerFast
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+# ---------------------------------------------------------------
+# IMPORTANT:
+# Do NOT use FastLanguageModel.from_pretrained() here.
+# It tries to reload AutoTokenizer and causes:
+#
+# ValueError:
+# Tokenizer class TokenizersBackend does not exist
+#
+# ---------------------------------------------------------------
+
+from transformers import (
+    LlamaTokenizerFast,
+    AutoModelForCausalLM,
+)
+
+from peft import PeftModel
 
 
-# ============================================================
+# ================================================================
 # PATHS
-# ============================================================
+# ================================================================
 
-BASE_MODEL = "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base"
-ADAPTER_PATH = "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v12"
-DATASET_PATH = "/home/jovyan/style_rewriter/data/style_dataset2_fixed.jsonl"
+BASE_MODEL = (
+    "/home/jovyan/work/sinllama/models/"
+    "SinLLaMA-merged-base"
+)
 
+ADAPTER_PATH = (
+    "/home/jovyan/work/sinllama/models/"
+    "adapters/style_sinllama_v13"
+)
 
-# ============================================================
+# ================================================================
 # CONFIG
-# ============================================================
+# ================================================================
 
 MAX_SEQ_LENGTH = 4096
 
-GEN_TEMPERATURE = 0.10
-GEN_TOP_P = 0.85
-GEN_TOP_K = 50
-GEN_REPETITION_PENALTY = 1.05
+GEN_MAX_NEW_TOKENS = 1024
 
-# ✅ CHANGED: was a flat 1024 regardless of article length.
-# Long articles were getting truncated mid-sentence, same bug
-# we fixed twice before in earlier test scripts. Now calculated
-# per-article in generate_style() based on input length.
-# This constant is now the FLOOR (minimum), not the ceiling.
-GEN_MAX_NEW_TOKENS_FLOOR = 512
-GEN_MAX_NEW_TOKENS_CEILING = 4096
-GEN_TOKENS_PER_WORD_MULTIPLIER = 3.5  # Sinhala needs more tokens/word than English
+TEMPERATURE = 0.10
+TOP_P = 0.85
+TOP_K = 50
+
+REPETITION_PENALTY = 1.05
 
 SEED = 42
 
-# Number of articles to evaluate in batch mode (--batch flag).
-BATCH_EVAL_N = 10
+# ================================================================
+# THE ARTICLE TO TEST
+# ================================================================
 
-# Diagnostic thresholds
-FACT_ENTITY_PRESERVATION_TARGET = 0.90
-LENGTH_RATIO_MIN = 0.80
-LENGTH_RATIO_MAX = 1.20
-
-
-# ============================================================
-# STYLE IDs
-# ============================================================
-
-STYLE_IDS = {
-    "style_1_formal_news",
-    "style_2_editorial",
-    "style_3_sports",
-    "style_4_youth",
-    "style_5_feature",
-}
+ARTICLE = """
+ශ්‍රී ලංකාවේ විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් කිහිපයක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.
+""".strip()
 
 
-# ============================================================
-# STYLE RULES  (unchanged from original v12)
-# ============================================================
+# ================================================================
+# STYLE RULES
+#
+# These must match the rules used by your trained adapter.
+# ================================================================
+
+# NOTE:
+# These must byte-for-byte match STYLE_RULES in train_style.py --
+# the adapter was fine-tuned on this exact English instruction text
+# via format_prompt(). An earlier version of this file used
+# Sinhala-language rules with a different "### INPUT ARTICLE:" /
+# "### RESPONSE:" prompt shape the adapter never saw during
+# training, which caused every generation to degenerate into a
+# verbatim copy of the input (0% style divergence, see
+# score_style_divergence()) while still scoring "100% correctness"
+# because a copy trivially preserves every fact.
 
 STYLE_RULES = {
 
     "style_1_formal_news": """
-ඔබ සිංහල පුවත්පත් කලාවේ වෘත්තීය ප්‍රවෘත්ති ලේඛකයෙකි.
+Write the article as a professional Sinhala news report.
 
-පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
-
-1. ලිපියේ වඩාත්ම වැදගත් කරුණ මුලින්ම ඉදිරිපත් කරන්න.
-2. වෘත්තීය, නිල සහ වස්තුමය සිංහල භාෂාව භාවිතා කරන්න.
-3. පුවත් වාර්තාකරණයට සුදුසු පැහැදිලි හා සංක්ෂිප්ත වාක්‍ය භාවිතා කරන්න.
-4. අනවශ්‍ය හැඟීම්බර හෝ අදහස් දැක්වීම් සහිත භාෂාව භාවිතා නොකරන්න.
-5. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් නිවැරදිව තබා ගන්න.
-6. කිසිදු නව කරුණක් හෝ සිදුවීමක් එකතු නොකරන්න.
-7. මුල් ලිපියේ ඇති තොරතුරු ඉවත් නොකරන්න.
-8. මුල් ලිපියේ අනුපිළිවෙළ සහ කරුණු ආරක්ෂා කරන්න.
-9. quotation marks තුළ ඇති වචන තිබේ නම් ඒවා වෙනස් නොකරන්න.
-10. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
-11. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
-12. පුවත් වාර්තාවකට ගැළපෙන ස්වභාවික වෘත්තීය ශෛලියක් පවත්වා ගන්න.
-""".strip(),
+- Objective and factual
+- Clear journalistic Sinhala
+- Most important information first
+- Formal vocabulary
+- No personal opinion
+- No unnecessary commentary
+- Preserve all important facts
+- Preserve names, numbers, dates and places
+- Do not invent information
+""",
 
     "style_2_editorial": """
-ඔබ සිංහල පුවත්පත් කතුවැකි ලේඛකයෙකි.
+Rewrite the article in a Sinhala editorial / analytical style.
 
-පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
-
-1. කරුණ පිළිබඳ විශ්ලේෂණාත්මක ආරම්භයක් ලබා දෙන්න.
-2. "අපි", "අපට", "සමස්තයක් ලෙස", "සැලකිය යුතුය" වැනි ස්වභාවික කතුවැකි භාෂාව භාවිතා කරන්න.
-3. සිදුවීමේ පසුබිම, වැදගත්කම සහ බලපෑම විශ්ලේෂණය කරන ආකාරයේ ලිවීමක් භාවිතා කරන්න.
-4. සරල පුවත් වාර්තාවක් ලෙස නොව කතුවැකිමය සහ විශ්ලේෂණාත්මක ස්වරයක් පවත්වා ගන්න.
-5. කරුණු මත පදනම් වූ අදහස් සහ විශ්ලේෂණාත්මක භාෂාව භාවිතා කරන්න.
-6. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් ආරක්ෂා කරන්න.
-7. නව කරුණු, සංඛ්‍යා හෝ සිදුවීම් නිර්මාණය නොකරන්න.
-8. මුල් ලිපියේ අර්ථය වෙනස් නොකරන්න.
-9. quotation marks තුළ ඇති මුල් වචන වෙනස් නොකරන්න.
-10. පුද්ගලයන්ගේ නම් සහ ගෞරව නාම වෙනස් නොකරන්න.
-11. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
-12. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
-13. අතිශයෝක්තියෙන් හෝ අනවශ්‍ය දේශපාලන ප්‍රකාශවලින් වළකින්න.
-""".strip(),
+- Analytical and reflective tone
+- Discuss the significance of the reported facts
+- Use natural editorial Sinhala
+- May use phrases such as "සැලකිය යුතුය" or "සමස්තයක් ලෙස"
+  only when they naturally fit
+- Do not invent facts
+- Do not exaggerate
+- Preserve names, numbers, dates and places
+- Preserve the factual basis of the original article
+""",
 
     "style_3_sports": """
-ඔබ සිංහල ක්‍රීඩා පුවත්පත් කලාවේ විශේෂඥයෙකි.
+Rewrite the article in a Sinhala sports-news style.
 
-පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
-
-1. වඩාත්ම නාටකීය සහ වැදගත් ක්‍රීඩා කරුණ මුලින්ම ගෙන එන්න. එය ලිපියේ පළමු වාක්‍යයෙන්ම පැහැදිලි විය යුතුය.
-
-2. ඉහළ ශක්තියකින් යුත් නමුත් ස්වභාවික ක්‍රීඩා පුවත් භාෂාවක් භාවිතා කරන්න.
-
-3. ක්‍රීඩා ක්‍රියාකාරකම් පෙන්වන ක්‍රියාකාරී ක්‍රියා පද භාවිතා කරන්න.
-   උදාහරණ:
-   "පහර දුන්නේය"
-   "ජයග්‍රහණය කළේය"
-   "පරාජය කළේය"
-   "ප්‍රහාරය එල්ල කළේය"
-   "ඉදිරියට පැමිණියේය"
-   "ලකුණු රැස් කළේය"
-   "විශිෂ්ට දක්ෂතාවක් දැක්වීය"
-   "තීරණාත්මක ජයග්‍රහණයක් ලබා ගත්තේය"
-
-4. වේගවත් රිද්මයක් සහ උද්වේගකර ක්‍රීඩා පුවත් ස්වරයක් පවත්වා ගන්න.
-
-5. ක්‍රීඩාවේ තීරණාත්මක අවස්ථාව, ජයග්‍රහණය, පරාජය, වාර්තාව හෝ විශිෂ්ට දක්ෂතාවය පැහැදිලිව ඉස්මතු කරන්න.
-
-6. මුල් ලිපියේ ඇති සියලුම කරුණු, ක්‍රීඩකයන්ගේ නම්, කණ්ඩායම් නම්, ස්ථාන, ලකුණු, සංඛ්‍යා, දිනයන් සහ තරග තොරතුරු නිවැරදිව තබා ගන්න.
-
-7. කිසිදු නව ක්‍රීඩකයෙකු, කණ්ඩායමක්, ලකුණක්, තරගයක්, වාර්තාවක් හෝ සිදුවීමක් එකතු නොකරන්න.
-
-8. මුල් ලිපියේ නොමැති ක්‍රීඩා තොරතුරු නිර්මාණය නොකරන්න.
-
-9. මුල් ලිපියේ ඉංග්‍රීසි වචන නොතිබේ නම් අනවශ්‍ය ඉංග්‍රීසි වචන එකතු නොකරන්න.
-
-10. quotation marks තුළ ඇති වචන හෝ ප්‍රකාශ වෙනස් නොකරන්න. ඒවා මුල් ලිපියේ ආකාරයටම තබා ගන්න.
-
-11. පුද්ගලයන්ගේ නම්, ගෞරව නාම සහ ස්ත්‍රී/පුරුෂ සම්බන්ධ නාම වෙනස් නොකරන්න.
-
-12. මුල් ලිපියේ ඇති සංඛ්‍යා, ලකුණු, දිනයන් සහ සංඛ්‍යාත්මක තොරතුරු වෙනස් නොකරන්න.
-
-13. උද්වේගය පෙන්වීම සඳහා උපරිම වශයෙන් එක් විස්මයාර්ථක ලකුණක් (!) පමණක් භාවිතා කරන්න.
-
-14. එකම වචනය හෝ වාක්‍ය ඛණ්ඩය අනවශ්‍ය ලෙස නැවත නැවත භාවිතා නොකරන්න.
-
-15. ක්‍රීඩා පුවත්පත් කලාවට ගැළපෙන ස්වභාවික සිංහල භාෂාව භාවිතා කරන්න. අතිශයෝක්තියෙන් හෝ කෘතිම වාක්‍යවලින් වළකින්න.
-
-16. සම්පූර්ණ වාක්‍ය පමණක් ලියන්න. වාක්‍ය අතරමගදී නතර නොකරන්න.
-
-17. නැවත ලියන ලිපියේ දිග මුල් ලිපියේ දිගට ආසන්නව තබා ගන්න.
-
-18. මුල් ලිපියේ ඇති සියලුම කරුණු ආරක්ෂා කරමින් ක්‍රීඩා පුවත්පත් ශෛලිය පමණක් වෙනස් කරන්න.
-""".strip(),
+- Energetic but professional
+- Emphasize important actions, events and outcomes
+- Use natural sports journalism vocabulary where appropriate
+- Do not force sports terminology into non-sports stories
+- Do not invent sporting events or actions
+- Preserve all facts, names, numbers and dates
+""",
 
     "style_4_youth": """
-ඔබ තරුණ පිරිස සඳහා සිංහල ඩිජිටල් මාධ්‍ය ලේඛකයෙකි.
+Rewrite the article in a modern, accessible Sinhala style
+suitable for younger readers.
 
-පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
-
-1. තරුණ පාඨකයාගේ අවධානය ලබා ගන්නා ස්වභාවික ආරම්භයක් භාවිතා කරන්න.
-2. සරල, පහසු සහ conversational සිංහල භාෂාව භාවිතා කරන්න.
-3. "ගොඩක්", "ටිකක්", "හිතෙනවා" වැනි ස්වභාවික තරුණ භාෂා භාවිතා කළ හැක.
-4. කෙටි සහ පැහැදිලි වාක්‍ය භාවිතා කරන්න.
-5. ලිපිය කියවන විට තරුණ පාඨකයෙකුට ස්වභාවිකව දැනෙන රිද්මයක් පවත්වා ගන්න.
-6. අතිශයෝක්තියෙන් හෝ කෘතිම slang භාවිතයෙන් වළකින්න.
-7. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් ආරක්ෂා කරන්න.
-8. කිසිදු නව කරුණක් එකතු නොකරන්න.
-9. මුල් ලිපියේ අර්ථය වෙනස් නොකරන්න.
-10. quotation marks තුළ ඇති වචන වෙනස් නොකරන්න.
-11. පුද්ගලයන්ගේ නම් සහ ගෞරව නාම වෙනස් නොකරන්න.
-12. අනවශ්‍ය ඉංග්‍රීසි වචන එකතු නොකරන්න.
-13. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
-14. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
-15. සම්පූර්ණ සහ පැහැදිලි වාක්‍ය භාවිතා කරන්න.
-""".strip(),
+- Conversational but grammatically correct Sinhala
+- Simple and clear sentences
+- Engaging tone
+- Natural modern vocabulary
+- Do not force greetings into every article
+- Do not use "යාලුවනේ" unless it naturally fits
+- Do not add information
+- Preserve names, numbers, dates and factual details
+""",
 
     "style_5_feature": """
-ඔබ සිංහල පුවත්පත් සහ සඟරා සඳහා විශේෂාංග ලිපි ලියන වෘත්තීය ලේඛකයෙකි.
+Rewrite the article in a Sinhala feature-writing style.
 
-පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
-
-1. සිදුවීමේ පරිසරය හෝ මනුෂ්‍ය අත්දැකීම ඉස්මතු කරන ආකර්ෂණීය ආරම්භයක් භාවිතා කරන්න.
-2. විස්තරාත්මක නමුත් ස්වභාවික සිංහල භාෂාව භාවිතා කරන්න.
-3. පාඨකයාට සිදුවීම සිතින් දැකගත හැකි වන ආකාරයේ වාතාවරණයක් නිර්මාණය කරන්න.
-4. මනුෂ්‍ය කේන්ද්‍රීය පැත්ත ඉස්මතු කරන්න.
-5. අවශ්‍ය තැන්වල වර්තමාන කාල රටාව භාවිතා කළ හැක.
-6. පුවත් වාර්තාවකට වඩා narrative සහ feature-style flow එකක් පවත්වා ගන්න.
-7. නමුත් මුල් ලිපියේ නොමැති සිදුවීම්, හැඟීම් හෝ පසුබිම් තොරතුරු නිර්මාණය නොකරන්න.
-8. මුල් ලිපියේ ඇති සියලුම කරුණු, නම්, ස්ථාන, සංඛ්‍යා සහ දිනයන් ආරක්ෂා කරන්න.
-9. quotation marks තුළ ඇති වචන වෙනස් නොකරන්න.
-10. පුද්ගලයන්ගේ නම් සහ ගෞරව නාම වෙනස් නොකරන්න.
-11. මුල් ලිපියේ අර්ථය වෙනස් නොකරන්න.
-12. අනවශ්‍ය ඉංග්‍රීසි වචන එකතු නොකරන්න.
-13. නිවැරදි සිංහල අක්ෂර වින්‍යාසය භාවිතා කරන්න.
-14. ලිපියේ දිග මුල් ලිපියට ආසන්නව තබා ගන්න.
-15. සම්පූර්ණ වාක්‍ය භාවිතා කරන්න.
-""".strip(),
+- Engaging narrative presentation
+- More descriptive language where appropriate
+- Smooth transitions
+- Human-interest perspective where supported by the source
+- Do not invent scenes, emotions or events
+- Do not fabricate background information
+- Preserve all factual information
+"""
 }
 
 
-# ============================================================
-# GLOBAL FACT PRESERVATION RULES  (unchanged from original v12)
-# ============================================================
+# ================================================================
+# COMMON INSTRUCTION
+#
+# Byte-for-byte match of the "### FACT PRESERVATION RULES:" block
+# built inline by format_prompt() in train_style.py.
+# ================================================================
 
-GLOBAL_RULES = """
-### IMPORTANT FACT-PRESERVATION RULES
-
-1. Preserve ALL factual information from the source article.
-2. Do NOT invent facts.
-3. Do NOT remove important facts.
-4. Do NOT change names.
-5. Do NOT change numbers.
-6. Do NOT change dates.
-7. Do NOT change locations.
-8. Do NOT change team names or player names.
-9. Preserve gender-marked honorifics exactly.
-10. "මහත්මිය" must remain "මහත්මිය".
-11. "මහතා" must remain "මහතා".
-12. Text inside quotation marks must remain VERBATIM.
-13. Do NOT insert new words into quotations.
-14. Do NOT translate quotations.
-15. Do NOT introduce new durations.
-16. Do NOT introduce new numbers.
-17. Do NOT introduce new symbols.
-18. Do NOT add events that are absent from the source.
-19. Keep the rewritten article approximately the same length.
-20. Write complete sentences.
-21. Do not stop in the middle of a sentence.
-22. Do not add an explanation before or after the rewritten article.
-23. Return ONLY the rewritten article.
-"""
+COMMON_RULES = (
+    "1. Preserve the meaning of every factual statement.\n"
+    "2. Do not add facts that are absent from the source.\n"
+    "3. Do not remove important factual information.\n"
+    "4. Preserve all person names exactly.\n"
+    "5. Preserve all organization names exactly.\n"
+    "6. Preserve all locations exactly.\n"
+    "7. Preserve numbers and numerical values exactly.\n"
+    "8. Preserve dates exactly.\n"
+    "9. Preserve quoted text exactly.\n"
+    "10. Preserve gender-marked honorifics such as "
+    "මහතා / මහත්මිය.\n"
+    "11. Do not invent durations, measurements or statistics.\n"
+    "12. Do not translate proper names unnecessarily.\n"
+    "13. Do not introduce unrelated information.\n"
+    "14. Change the writing STYLE, not the underlying facts.\n"
+    "15. Use natural Sinhala grammar and morphology.\n"
+    "16. Do not deliberately replace correct Sinhala words with "
+    "different words merely to make the sentence different.\n"
+)
 
 
-# ============================================================
-# EVALUATION METRICS
-# ============================================================
+# ================================================================
+# SEED
+# ================================================================
 
-def get_ngrams(words, n):
-    return [tuple(words[i:i+n]) for i in range(len(words)-n+1)]
+def set_seed(seed=42):
 
+    import random
 
-def rouge_n(reference, generated, n):
-    ref_words = reference.split()
-    gen_words = generated.split()
-    ref_ngrams = Counter(get_ngrams(ref_words, n))
-    gen_ngrams = Counter(get_ngrams(gen_words, n))
-    overlap = sum((ref_ngrams & gen_ngrams).values())
-    ref_total = sum(ref_ngrams.values())
-    gen_total = sum(gen_ngrams.values())
-    precision = overlap / gen_total if gen_total else 0
-    recall = overlap / ref_total if ref_total else 0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0
-    return {"precision": precision, "recall": recall, "f1": f1}
+    random.seed(seed)
+
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
-def smoothed_bleu(reference, generated, max_n=4):
-    ref_words = reference.split()
-    gen_words = generated.split()
-    if not gen_words:
-        return 0.0
-    epsilon = 0.1
-    precisions = []
-    for n in range(1, max_n + 1):
-        ref_ng = Counter(get_ngrams(ref_words, n))
-        gen_ng = Counter(get_ngrams(gen_words, n))
-        overlap = sum((ref_ng & gen_ng).values())
-        total = sum(gen_ng.values())
-        if total == 0:
-            precisions.append(0.0)
-        elif overlap == 0:
-            precisions.append(epsilon / total)
-        else:
-            precisions.append(overlap / total)
-    if all(p == 0 for p in precisions):
-        return 0.0
-    geo_mean = np.exp(np.mean(np.log([max(p, 1e-9) for p in precisions])))
-    bp = min(1.0, len(gen_words) / len(ref_words)) if ref_words else 0
-    return geo_mean * bp
+# ================================================================
+# LOAD TOKENIZER
+# ================================================================
 
+def load_tokenizer():
 
-def cosine_sim(reference, generated):
-    try:
-        vec = TfidfVectorizer()
-        mat = vec.fit_transform([reference, generated])
-        return float(cosine_similarity(mat[0:1], mat[1:2])[0][0])
-    except Exception:
-        return 0.0
+    print("\n🔹 Loading LlamaTokenizerFast explicitly...")
 
-
-def length_ratio(reference, generated):
-    orig = len(reference.split())
-    gen = len(generated.split())
-    return gen / orig if orig else 0.0
-
-
-def length_preservation(reference, generated):
-    ratio = length_ratio(reference, generated)
-    if ratio == 0:
-        return 0.0
-    if LENGTH_RATIO_MIN <= ratio <= LENGTH_RATIO_MAX:
-        return 1.0
-    elif ratio < LENGTH_RATIO_MIN:
-        return ratio / LENGTH_RATIO_MIN
-    return max(0.0, 2.0 - ratio / LENGTH_RATIO_MAX)
-
-
-def normalize_token(token):
-    """Normalize a Sinhala/text token for robust entity matching."""
-    token = unicodedata.normalize("NFC", token)
-    token = token.strip(" \t\n\r.,!?;:()[]{}\"'“”‘’«»/\\|—–-")
-    return token
-
-
-def extract_entities(source):
-    """
-    Lightweight factual/entity extraction.
-
-    This intentionally avoids an external NER model. It focuses on:
-      - numbers
-      - dates/time-like numeric expressions
-      - quoted text
-      - capitalized/Latin tokens
-      - multi-word Sinhala/Latin proper-name candidates
-
-    The goal is a diagnostic, not a perfect Sinhala NER system.
-    """
-    entities = []
-
-    # Numbers, including decimals and comma-separated numbers.
-    entities += re.findall(r"\b\d+(?:[.,]\d+)*\b", source)
-
-    # Quoted content must be preserved verbatim.
-    entities += re.findall(r'[“"«](.*?)[”"»]', source, flags=re.DOTALL)
-
-    # Latin/English tokens that may be names, organizations, roads, etc.
-    entities += re.findall(r"\b[A-Za-z][A-Za-z0-9._/-]{1,}\b", source)
-
-    # Sinhala multi-token candidates containing common proper-name markers.
-    # Keep these conservative to avoid penalizing ordinary words.
-    for phrase in re.findall(
-        r"(?:ශ්‍රී\s+පාද|මස්කෙළිය|මාවුස්සාකැලේ|නාවලපිටිය|"
-        r"රත්නපුර|නිවිතිගල|හැටන්|කොළඹ|නුවරඑලිය|නුවරඑළිය|"
-        r"ගිනිගත්හේන|නෝටව්?බ්‍රිජ්|නෝටන්බ්‍රිජ්)",
-        source
-    ):
-        entities.append(phrase)
-
-    # Normalize and deduplicate while preserving order.
-    out = []
-    seen = set()
-    for e in entities:
-        e = normalize_token(e)
-        if not e:
-            continue
-        key = e.casefold()
-        if key not in seen:
-            seen.add(key)
-            out.append(e)
-    return out
-
-
-def entity_preservation(source, generated):
-    """
-    Percentage of extracted source entities/numbers that still occur
-    in the generated article. Exact normalized substring matching is used.
-    """
-    entities = extract_entities(source)
-    if not entities:
-        return 1.0, [], []
-
-    gen_norm = unicodedata.normalize("NFC", generated).casefold()
-    preserved = []
-    missing = []
-
-    for entity in entities:
-        if unicodedata.normalize("NFC", entity).casefold() in gen_norm:
-            preserved.append(entity)
-        else:
-            missing.append(entity)
-
-    return len(preserved) / len(entities), preserved, missing
-
-
-def new_content_candidates(source, generated):
-    """
-    Find simple numeric/quoted/Latin facts that appear in generated text
-    but were absent from the source. This is a conservative hallucination
-    signal, not a semantic hallucination detector.
-    """
-    source_entities = set(e.casefold() for e in extract_entities(source))
-    generated_entities = extract_entities(generated)
-
-    new_items = []
-    seen = set()
-
-    for entity in generated_entities:
-        key = entity.casefold()
-        if key not in source_entities and key not in seen:
-            seen.add(key)
-            new_items.append(entity)
-
-    return new_items
-
-
-def factual_diagnostics(source, generated):
-    preservation, preserved, missing = entity_preservation(source, generated)
-    new_items = new_content_candidates(source, generated)
-
-    return {
-        "entity_preservation": preservation,
-        "preserved_entities": preserved,
-        "missing_entities": missing,
-        "new_fact_candidates": new_items,
-        "missing_count": len(missing),
-        "new_fact_count": len(new_items),
-    }
-
-
-def evaluate(source, generated, reference=None):
-    """
-    Evaluate generated text.
-
-    - Reference-based metrics measure similarity to the human/reference rewrite
-      when one is available.
-    - Source-based diagnostics always measure factual preservation against the
-      original article.
-    """
-    comparison = reference if reference else source
-
-    r1 = rouge_n(comparison, generated, 1)
-    r2 = rouge_n(comparison, generated, 2)
-    bleu = smoothed_bleu(comparison, generated)
-    cos = cosine_sim(comparison, generated)
-    lp = length_preservation(comparison, generated)
-
-    factual = factual_diagnostics(source, generated)
-
-    # Keep the original style/rewrite score, but explicitly penalize
-    # factual loss. This prevents a short/high-overlap rewrite from looking
-    # excellent while silently deleting facts.
-    style_score = (
-        r1["f1"] * 0.20 +
-        r2["f1"] * 0.15 +
-        bleu     * 0.15 +
-        cos      * 0.15 +
-        lp       * 0.10
+    tokenizer = LlamaTokenizerFast.from_pretrained(
+        BASE_MODEL,
+        local_files_only=True,
     )
 
-    factual_score = factual["entity_preservation"] * 0.25
-    score = style_score + factual_score
+    tokenizer.padding_side = "left"
 
-    return {
-        "rouge_1_f1": r1["f1"],
-        "rouge_2_f1": r2["f1"],
-        "bleu": bleu,
-        "cosine": cos,
-        "length_preservation": lp,
-        "length_ratio": length_ratio(comparison, generated),
-        "entity_preservation": factual["entity_preservation"],
-        "missing_entities": factual["missing_entities"],
-        "new_fact_candidates": factual["new_fact_candidates"],
-        "missing_count": factual["missing_count"],
-        "new_fact_count": factual["new_fact_count"],
-        "overall": score,
-        "comparison_type": "reference" if reference else "source",
-    }
-
-# ============================================================
-# TOKENIZER PATCH  (unchanged from original v12)
-# ============================================================
-
-def create_patched_model_directory(base_path: str):
-    base = Path(base_path)
-    if not base.exists():
-        raise FileNotFoundError(f"Base model does not exist: {base}")
-    temp_dir = Path(tempfile.mkdtemp(prefix="sinllama_tokenizer_fixed_"))
-    print()
-    print("🔧 Creating temporary tokenizer-compatible model directory...")
-    print(f"   Original : {base}")
-    print(f"   Temporary: {temp_dir}")
-    for item in base.iterdir():
-        destination = temp_dir / item.name
-        try:
-            destination.symlink_to(item, target_is_directory=item.is_dir())
-        except Exception:
-            if item.is_file():
-                shutil.copy2(item, destination)
-    original_config_path = base / "tokenizer_config.json"
-    if not original_config_path.exists():
-        raise FileNotFoundError("tokenizer_config.json was not found in base model.")
-    with open(original_config_path, "r", encoding="utf-8") as f:
-        tokenizer_config = json.load(f)
-    tokenizer_config["tokenizer_class"] = "LlamaTokenizerFast"
-    if "backend_tokenizer_class" in tokenizer_config:
-        tokenizer_config.pop("backend_tokenizer_class")
-    patched_config_path = temp_dir / "tokenizer_config.json"
-    with open(patched_config_path, "w", encoding="utf-8") as f:
-        json.dump(tokenizer_config, f, ensure_ascii=False, indent=2)
-    print("   ✅ Temporary tokenizer patch created.")
-    return temp_dir
-
-
-# ============================================================
-# LOAD TOKENIZER  (unchanged)
-# ============================================================
-
-def load_tokenizer(model_path: str):
-    print()
-    print("🔹 Loading LLaMA tokenizer explicitly...")
-    tokenizer = LlamaTokenizerFast.from_pretrained(model_path, local_files_only=True)
-    tokenizer.padding_side = "right"
-    if tokenizer.eos_token is not None:
+    if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    print(f"   ✅ LlamaTokenizerFast loaded — vocab {len(tokenizer):,}")
+
+    print(f"   Vocab size : {len(tokenizer):,}")
+    print(f"   EOS token  : {tokenizer.eos_token!r}")
+    print(f"   EOS ID     : {tokenizer.eos_token_id}")
+    print(f"   PAD token  : {tokenizer.pad_token!r}")
+    print(f"   PAD ID     : {tokenizer.pad_token_id}")
+
     return tokenizer
 
 
-# ============================================================
-# LOAD MODEL + ADAPTER  (unchanged)
-# ============================================================
+# ================================================================
+# LOAD MODEL
+#
+# IMPORTANT:
+# We deliberately use Transformers + PEFT instead of:
+#
+# FastLanguageModel.from_pretrained()
+#
+# because your SinLLaMA tokenizer config causes Unsloth's internal
+# tokenizer loader to throw TokenizersBackend.
+# ================================================================
 
-def load_model():
-    print()
-    print("🔹 Preparing tokenizer-compatible base model...")
-    patched_base = create_patched_model_directory(BASE_MODEL)
-    tokenizer = load_tokenizer(str(patched_base))
-    print()
-    print("🔹 Loading SinLLaMA base through Unsloth...")
-    try:
-        model, _ = FastLanguageModel.from_pretrained(
-            model_name=str(patched_base),
-            max_seq_length=MAX_SEQ_LENGTH,
-            dtype=torch.bfloat16,
-            load_in_4bit=True,
+def load_model(tokenizer):
+
+    print("\n🔹 Loading base model...")
+
+    if not torch.cuda.is_available():
+
+        print("   ⚠️ CUDA not available. Using CPU.")
+
+        dtype = torch.float32
+
+        model = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL,
+            torch_dtype=dtype,
             local_files_only=True,
-            attn_implementation="eager",
+            low_cpu_mem_usage=True,
         )
-    except Exception:
-        print("❌ Failed to load base model.")
-        traceback.print_exc()
-        shutil.rmtree(patched_base, ignore_errors=True)
-        raise
-    print("   ✅ SinLLaMA base loaded.")
-    print()
-    print("🔹 Loading style rewriter adapter...")
-    try:
-        from peft import PeftModel
-        model = PeftModel.from_pretrained(model, ADAPTER_PATH, is_trainable=False)
-    except Exception:
-        print("❌ Failed to load LoRA adapter.")
-        traceback.print_exc()
-        shutil.rmtree(patched_base, ignore_errors=True)
-        raise
-    print("   ✅ LoRA adapter loaded.")
+
+    else:
+
+        print(
+            f"   GPU: {torch.cuda.get_device_name(0)}"
+        )
+
+        model = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            local_files_only=True,
+            low_cpu_mem_usage=True,
+        )
+
+    print("   ✅ Base model loaded")
+
+    # ------------------------------------------------------------
+    # Some adapter checkpoints (e.g. style_sinllama_v13) were saved
+    # with embed_tokens resized to the tokenizer's vocab size
+    # (139,337) while lm_head was left at the original size
+    # (139,336) -- an asymmetric resize, not a tied-embeddings one.
+    # model.resize_token_embeddings() resizes BOTH input and output
+    # embeddings together, which would create a *new* mismatch on
+    # lm_head, so we grow only the input embedding table here to
+    # exactly match what the checkpoint expects.
+    # ------------------------------------------------------------
+
+    input_embeddings = model.get_input_embeddings()
+    current_vocab_size = input_embeddings.weight.shape[0]
+    tokenizer_vocab_size = len(tokenizer)
+
+    if current_vocab_size != tokenizer_vocab_size:
+
+        print(
+            f"   ⚠️ Resizing input embeddings only: "
+            f"{current_vocab_size} -> {tokenizer_vocab_size} "
+            f"(lm_head left untouched)"
+        )
+
+        new_embeddings = torch.nn.Embedding(
+            tokenizer_vocab_size,
+            input_embeddings.weight.shape[1],
+            dtype=input_embeddings.weight.dtype,
+            device=input_embeddings.weight.device,
+        )
+
+        new_embeddings.weight.data[:current_vocab_size] = (
+            input_embeddings.weight.data
+        )
+
+        model.set_input_embeddings(new_embeddings)
+
+    print("\n🔹 Loading LoRA adapter...")
+
+    model = PeftModel.from_pretrained(
+        model,
+        ADAPTER_PATH,
+        local_files_only=True,
+        is_trainable=False,
+    )
+
+    print("   ✅ Adapter loaded")
+
     model.eval()
-    try:
-        model = FastLanguageModel.for_inference(model)
-        print("   ✅ Unsloth inference optimization enabled.")
-    except Exception as e:
-        print(f"   ⚠️ Could not enable Unsloth inference mode: {e}")
-    return model, tokenizer, patched_base
+
+    return model
 
 
-# ============================================================
-# LOAD DATASET  (unchanged)
-# ============================================================
+# ================================================================
+# FORMAT PROMPT
+# ================================================================
 
-def load_dataset():
-    print()
-    print(f"📂 Loading dataset: {DATASET_PATH}")
-    if not os.path.exists(DATASET_PATH):
-        raise FileNotFoundError(f"Dataset not found: {DATASET_PATH}")
-    records = []
-    with open(DATASET_PATH, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    print(f"   ✅ Loaded {len(records):,} records.")
-    return records
+def build_prompt(style_id, article):
 
+    instruction = STYLE_RULES[style_id].strip()
 
-def get_article_text(record):
-    return (record.get("content") or record.get("input") or record.get("article") or "").strip()
-
-
-def get_style(record):
-    return (
-        record.get("style") or
-        record.get("style_id") or
-        record.get("metadata", {}).get("style_id") or ""
-    )
-
-
-def get_reference_text(record):
-    return (
-        record.get("rewritten_text") or
-        record.get("output") or
-        record.get("corrected_text") or ""
-    ).strip()
-
-
-def get_unique_articles(records):
-    articles = {}
-    for record in records:
-        article = get_article_text(record)
-        if not article:
-            continue
-        url = record.get("url") or record.get("metadata", {}).get("url")
-        key = url if url else article[:200]
-        if key not in articles:
-            articles[key] = {"article": article, "record": record, "url": url}
-    return list(articles.values())
-
-
-# ============================================================
-# BUILD PROMPT  (unchanged from original v12)
-# ============================================================
-
-def build_prompt(article: str, style_id: str):
-    style_rules = STYLE_RULES.get(style_id, "")
-    return (
+    # Mirrors train_style.py's format_prompt(instruction, article, "")
+    # exactly, including the trailing newline after "### Response:" --
+    # that newline is where every training label began, so dropping
+    # it (e.g. via a trailing .strip()) shifts the prompt out of
+    # distribution.
+    prompt = (
         "### Instruction:\n"
-        f"{style_rules}\n\n"
-        "### GLOBAL REQUIREMENTS:\n"
-        f"{GLOBAL_RULES}\n\n"
-        "### INPUT ARTICLE:\n"
-        f"{article}\n\n"
-        "### RESPONSE:\n"
+        f"{instruction}\n\n"
+
+        "### FACT PRESERVATION RULES:\n"
+        f"{COMMON_RULES}\n"
+
+        "### Input:\n"
+        f"{article.strip()}\n\n"
+
+        "### Response:\n"
     )
 
+    return prompt
 
-# ============================================================
+
+# ================================================================
 # GENERATE
-# ============================================================
+# ================================================================
 
 @torch.inference_mode()
-def generate_style(model, tokenizer, article: str, style_id: str):
+def generate_rewrite(
+    model,
+    tokenizer,
+    style_id,
+    article,
+):
 
-    prompt = build_prompt(article, style_id)
+    prompt = build_prompt(
+        style_id,
+        article,
+    )
 
     inputs = tokenizer(
         prompt,
         return_tensors="pt",
         truncation=True,
-        max_length=MAX_SEQ_LENGTH,
-        padding=False,
+        max_length=MAX_SEQ_LENGTH - GEN_MAX_NEW_TOKENS,
     )
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
-    # ✅ FIXED: scale max_new_tokens with article length instead of flat 1024.
-    # A flat 1024 truncated longer articles mid-sentence — same bug fixed
-    # twice in earlier test scripts. The floor/ceiling bounds keep it sane.
-    word_count = len(article.split())
-    max_new_tokens = int(
-        max(GEN_MAX_NEW_TOKENS_FLOOR,
-            min(GEN_MAX_NEW_TOKENS_CEILING,
-                word_count * GEN_TOKENS_PER_WORD_MULTIPLIER))
+    device = next(model.parameters()).device
+
+    input_ids = inputs["input_ids"].to(device)
+    attention_mask = inputs["attention_mask"].to(device)
+
+    print(
+        f"   Input tokens: {input_ids.shape[-1]}"
     )
 
     output_ids = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
+
+        input_ids=input_ids,
+
+        attention_mask=attention_mask,
+
+        max_new_tokens=GEN_MAX_NEW_TOKENS,
+
         do_sample=True,
-        temperature=GEN_TEMPERATURE,
-        top_p=GEN_TOP_P,
-        top_k=GEN_TOP_K,
-        repetition_penalty=GEN_REPETITION_PENALTY,
+
+        temperature=TEMPERATURE,
+
+        top_p=TOP_P,
+
+        top_k=TOP_K,
+
+        repetition_penalty=REPETITION_PENALTY,
+
         eos_token_id=tokenizer.eos_token_id,
+
         pad_token_id=tokenizer.pad_token_id,
+
         use_cache=True,
     )
 
-    input_length = inputs["input_ids"].shape[1]
-    generated_ids = output_ids[0, input_length:]
-    generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-    return generated_text.strip()
+    generated_ids = output_ids[
+        0,
+        input_ids.shape[-1]:
+    ]
+
+    output = tokenizer.decode(
+        generated_ids,
+        skip_special_tokens=True,
+    ).strip()
+
+    # ------------------------------------------------------------
+    # Remove accidental prompt markers
+    # ------------------------------------------------------------
+
+    output = re.sub(
+        r"^###\s*Response\s*:\s*",
+        "",
+        output,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    output = re.sub(
+        r"^###\s*Response\s*",
+        "",
+        output,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    return output
 
 
-# ============================================================
-# CLEAN OUTPUT
-# ============================================================
+# ================================================================
+# TEXT NORMALIZATION
+# ================================================================
 
-def clean_output(text):
-    if not text:
-        return ""
+def normalize_text(text):
 
-    # Remove accidental prompt headers
-    for prefix in ["### Response:", "### Output:", "Response:", "Output:"]:
-        if text.startswith(prefix):
-            text = text[len(prefix):].strip()
+    text = text.replace("\u200b", "")
+    text = text.replace("\u200c", "")
+    text = text.replace("\u200d", "")
+    text = text.replace("\ufeff", "")
 
-    # Stop if model starts generating another section
-    for marker in ["### Instruction:", "### INPUT ARTICLE:", "### Input:", "### GLOBAL REQUIREMENTS:"]:
-        if marker in text:
-            text = text.split(marker, 1)[0].strip()
-
-    # ✅ NEW: strip .। danda artifact (Devanagari full stop appearing after
-    # a Sinhala sentence-ending period — model sometimes emits this,
-    # possibly learned from training data that had it).
-    text = re.sub(r'\.।\s*', '. ', text)
-    text = re.sub(r'।\s*', ' ', text)
-
-    # Remove stray markdown
-    text = re.sub(r'^[#\*\-\>].*$', '', text, flags=re.MULTILINE)
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
 
     return text.strip()
 
 
-# ============================================================
-# DISPLAY RESULT
-# ============================================================
+# ================================================================
+# EXTRACT FACTUAL TOKENS
+#
+# We specifically inspect:
+#   - numbers
+#   - percentages
+#   - dates
+#   - years
+# ================================================================
 
-def display_result(article, output, style_id, metrics=None):
-    print()
-    print("=" * 80)
-    print(f"STYLE: {style_id}")
-    print("=" * 80)
-    print()
-    print("SOURCE ARTICLE")
-    print("-" * 80)
-    print(article)
-    print()
-    print("REWRITTEN ARTICLE")
-    print("-" * 80)
-    print(output)
-    print()
-    print(f"Source characters : {len(article):,}")
-    print(f"Output characters : {len(output):,}")
-    if len(article) > 0:
-        print(f"Length ratio      : {len(output)/len(article):.2f}")
-    if metrics:
-        print()
-        print("EVALUATION METRICS")
-        print("-" * 40)
-        print(f"  ROUGE-1 F1        : {metrics['rouge_1_f1']:.4f}")
-        print(f"  ROUGE-2 F1        : {metrics['rouge_2_f1']:.4f}")
-        print(f"  BLEU (smoothed)   : {metrics['bleu']:.4f}")
-        print(f"  Cosine similarity : {metrics['cosine']:.4f}")
-        print(f"  Length ratio      : {metrics['length_ratio']:.3f}")
-        print(f"  Length preserv.   : {metrics['length_preservation']:.4f}")
-        print(f"  Entity preserv.   : {metrics['entity_preservation']:.4f}")
-        print(f"  Missing entities  : {metrics['missing_count']}")
-        print(f"  New fact signals  : {metrics['new_fact_count']}")
-        print(f"  Overall score     : {metrics['overall']:.4f}  ({metrics['overall']*100:.2f}%)")
-        if metrics.get("missing_entities"):
-            print(f"  ⚠️ Missing: {', '.join(metrics['missing_entities'][:12])}")
-        if metrics.get("new_fact_candidates"):
-            print(f"  ⚠️ New fact signals: {', '.join(metrics['new_fact_candidates'][:12])}")
-    print("=" * 80)
+def extract_numbers(text):
+
+    text = normalize_text(text)
+
+    values = []
+
+    # Numbers such as:
+    # 50
+    # 2026
+    # 16
+    # 3
+    for value in re.findall(
+        r"\d+(?:[.,]\d+)?",
+        text,
+    ):
+        values.append(value)
+
+    return values
 
 
-# ============================================================
-# SAVE RESULT
-# ============================================================
+# ================================================================
+# EXTRACT DATES
+# ================================================================
 
-def save_result(article, outputs, output_path):
-    result = {"source_article": article, "styles": outputs}
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
-    print()
-    print(f"💾 Results saved to: {output_path}")
+def extract_dates(text):
 
+    text = normalize_text(text)
 
-# ============================================================
-# INTERACTIVE MODE  (unchanged flow from original v12)
-# ============================================================
+    dates = []
 
-def select_article(articles):
-    if not articles:
-        raise RuntimeError("No valid articles found in dataset.")
-    print()
-    print("=" * 80)
-    print("AVAILABLE ARTICLES")
-    print("=" * 80)
-    display_count = min(20, len(articles))
-    for i in range(display_count):
-        preview = articles[i]["article"].replace("\n", " ").strip()
-        if len(preview) > 100:
-            preview = preview[:100] + "..."
-        print(f"[{i+1:02d}] {preview}")
-    print()
-    choice = input(f"Select article [1-{display_count}] (default 1): ").strip()
-    try:
-        index = int(choice) - 1 if choice else 0
-    except ValueError:
-        index = 0
-    if index < 0 or index >= display_count:
-        index = 0
-    return articles[index]["article"]
+    # 2026 මැයි 16
+    patterns = [
+
+        r"\d{4}\s+[^\s]+\s+\d{1,2}",
+
+        r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}",
+
+        r"\d{4}[/-]\d{1,2}[/-]\d{1,2}",
+    ]
+
+    for pattern in patterns:
+
+        dates.extend(
+            re.findall(
+                pattern,
+                text,
+            )
+        )
+
+    return dates
 
 
-def select_styles():
-    print()
-    print("=" * 80)
-    print("STYLE SELECTION")
-    print("=" * 80)
-    print("1. Formal News")
-    print("2. Editorial")
-    print("3. Sports")
-    print("4. Youth")
-    print("5. Feature")
-    print("6. ALL STYLES")
-    print()
-    choice = input("Select style [1-6] (default 6): ").strip() or "6"
-    mapping = {
-        "1": ["style_1_formal_news"],
-        "2": ["style_2_editorial"],
-        "3": ["style_3_sports"],
-        "4": ["style_4_youth"],
-        "5": ["style_5_feature"],
-        "6": list(STYLE_IDS),
-    }
-    return mapping.get(choice, mapping["6"])
+# ================================================================
+# EXTRACT IMPORTANT FACTUAL PHRASES
+#
+# This article is Sinhala, therefore word-level exact matching
+# alone is too strict. We use character n-grams + important tokens.
+# ================================================================
+
+def tokenize_sinhala(text):
+
+    text = normalize_text(text)
+
+    return re.findall(
+        r"[\u0D80-\u0DFF]+|[A-Za-z]+|\d+(?:[.,]\d+)?",
+        text,
+    )
 
 
-def run_interactive(model, tokenizer, records):
-    articles = get_unique_articles(records)
-    print(f"\n   Unique source articles: {len(articles):,}")
-    article = select_article(articles)
-    styles = select_styles()
-    outputs = {}
-    print()
-    print("=" * 80)
-    print("🚀 GENERATION STARTED")
-    print("=" * 80)
-    for style_id in styles:
-        print(f"\n🔹 Generating: {style_id}")
-        try:
-            output = clean_output(generate_style(model, tokenizer, article, style_id))
-            outputs[style_id] = output
-            metrics = evaluate(article, output, reference=None)
-            display_result(article, output, style_id, metrics)
-        except Exception as e:
-            print(f"❌ Generation failed for {style_id}: {type(e).__name__}: {e}")
-            traceback.print_exc()
-    if outputs:
-        save_result(article, outputs, "/home/jovyan/work/sinllama/test_results_v13.json")
+# ================================================================
+# IMPORTANT KEYWORD EXTRACTION
+# ================================================================
+
+STOP_WORDS = {
+    "සහ",
+    "හා",
+    "ද",
+    "ය",
+    "වෙත",
+    "වන",
+    "වූ",
+    "වීම",
+    "ඇත",
+    "කර",
+    "කළ",
+    "කිරීම",
+    "මෙම",
+    "එම",
+    "එක්",
+    "විසින්",
+    "සඳහා",
+    "ලෙස",
+    "සිට",
+    "බව",
+    "ඔහු",
+    "ඇය",
+    "ඔවුන්",
+    "එය",
+    "ඒ",
+    "නම්",
+    "පමණක්",
+    "දැනට",
+}
 
 
-# ============================================================
-# BATCH EVALUATION MODE
-# ============================================================
+def important_tokens(text):
 
-def run_batch_eval(model, tokenizer, records, n=BATCH_EVAL_N):
-    """
-    Evaluate N articles × all 5 styles.
+    tokens = tokenize_sinhala(text)
 
-    IMPORTANT:
-      - Reference-based metrics compare generated output with the dataset's
-        human/reference rewrite for that style.
-      - Factual preservation is ALWAYS checked against the original source.
-      - Articles with all 5 style references are preferred.
-    """
-    print()
-    print("=" * 80)
-    print(f"🧪 BATCH EVALUATION — {n} articles × 5 styles = {n*5} test cases")
-    print("=" * 80)
+    result = []
 
-    # Group records by URL (fallback to source prefix).
-    by_url = {}
-    for rec in records:
-        url = rec.get("url") or get_article_text(rec)[:200]
-        by_url.setdefault(url, []).append(rec)
+    for token in tokens:
 
-    qualifying = []
-    for url, recs in by_url.items():
-        article = get_article_text(recs[0])
-        if not article:
+        clean = token.strip()
+
+        if not clean:
             continue
 
-        styles_present = {
-            get_style(rec)
-            for rec in recs
-            if get_style(rec) in STYLE_IDS and get_reference_text(rec)
-        }
+        if clean in STOP_WORDS:
+            continue
 
-        # Prefer complete 5-style articles, then longer articles.
-        complete = len(styles_present) == len(STYLE_IDS)
-        qualifying.append(
-            (complete, len(styles_present), len(article.split()), url, recs)
-        )
+        # Keep numbers
+        if re.search(r"\d", clean):
 
-    qualifying.sort(reverse=True)
+            result.append(clean)
 
-    selected = qualifying[:n]
-    if not selected:
-        print("⚠️ No articles found for batch evaluation.")
-        return
+            continue
 
-    all_scores = []
-    scores_by_style = {s: [] for s in STYLE_IDS}
-    entity_scores_by_style = {s: [] for s in STYLE_IDS}
-    missing_by_style = {s: [] for s in STYLE_IDS}
-    hallucination_by_style = {s: [] for s in STYLE_IDS}
+        # Ignore very short Sinhala particles
+        if len(clean) <= 2:
+            continue
 
-    for idx, (_, style_count, _, url, recs) in enumerate(selected, 1):
-        article = get_article_text(recs[0])
+        result.append(clean)
 
-        print(f"\n{'─'*80}")
-        print(f"Article {idx}/{len(selected)} | reference styles: {style_count}/5")
-        print(f"Words: {len(article.split())}")
-        print(f"Preview: {article[:120]}...")
+    return result
 
-        ref_by_style = {}
-        for rec in recs:
-            sid = get_style(rec)
-            ref = get_reference_text(rec)
-            if sid in STYLE_IDS and ref:
-                ref_by_style[sid] = ref
 
-        for style_id in sorted(STYLE_IDS):
-            try:
-                output = clean_output(
-                    generate_style(model, tokenizer, article, style_id)
-                )
+# ================================================================
+# NUMBER CORRECTNESS
+# ================================================================
 
-                reference = ref_by_style.get(style_id)
+def score_numbers(original, rewritten):
 
-                m = evaluate(
-                    source=article,
-                    generated=output,
-                    reference=reference
-                )
+    original_numbers = extract_numbers(original)
+    rewritten_numbers = extract_numbers(rewritten)
 
-                all_scores.append(m["overall"])
-                scores_by_style[style_id].append(m["overall"])
-                entity_scores_by_style[style_id].append(
-                    m["entity_preservation"]
-                )
-                missing_by_style[style_id].append(m["missing_count"])
-                hallucination_by_style[style_id].append(
-                    m["new_fact_count"]
-                )
+    if not original_numbers:
+        return 100.0, [], []
 
-                ref_label = "reference" if reference else "source"
-
-                status = "PASS"
-                if m["entity_preservation"] < FACT_ENTITY_PRESERVATION_TARGET:
-                    status = "FACT-LOSS"
-                if m["new_fact_count"] > 0:
-                    status = "HALLUCINATION-SIGNAL"
-
-                print(
-                    f"  {style_id:<25} "
-                    f"score={m['overall']*100:6.1f}% "
-                    f"R1={m['rouge_1_f1']:.3f} "
-                    f"R2={m['rouge_2_f1']:.3f} "
-                    f"BLEU={m['bleu']:.3f} "
-                    f"cos={m['cosine']:.3f} "
-                    f"LP={m['length_preservation']:.3f} "
-                    f"facts={m['entity_preservation']:.3f} "
-                    f"missing={m['missing_count']} "
-                    f"new={m['new_fact_count']} "
-                    f"[{ref_label}] "
-                    f"→ {status}"
-                )
-
-                if m["missing_entities"]:
-                    print(
-                        "      Missing: "
-                        + ", ".join(m["missing_entities"][:10])
-                    )
-
-                if m["new_fact_candidates"]:
-                    print(
-                        "      New fact signals: "
-                        + ", ".join(m["new_fact_candidates"][:10])
-                    )
-
-            except Exception as e:
-                print(
-                    f"  ❌ {style_id}: "
-                    f"{type(e).__name__}: {e}"
-                )
-
-    print()
-    print("=" * 80)
-    print("📊 AGGREGATE RESULTS")
-    print("=" * 80)
-    print()
-    print(
-        f"{'Style':<25} "
-        f"{'Score':>9} "
-        f"{'Facts':>9} "
-        f"{'Missing':>9} "
-        f"{'New':>9} "
-        f"{'N':>5}"
+    original_counter = Counter(
+        original_numbers
     )
-    print("-" * 75)
 
-    for style_id in sorted(STYLE_IDS):
-        vals = scores_by_style[style_id]
-        facts = entity_scores_by_style[style_id]
-        miss = missing_by_style[style_id]
-        new = hallucination_by_style[style_id]
+    rewritten_counter = Counter(
+        rewritten_numbers
+    )
 
-        if vals:
-            print(
-                f"{style_id:<25} "
-                f"{np.mean(vals)*100:8.2f}% "
-                f"{np.mean(facts)*100:8.2f}% "
-                f"{np.mean(miss):9.2f} "
-                f"{np.mean(new):9.2f} "
-                f"{len(vals):5d}"
-            )
-        else:
-            print(
-                f"{style_id:<25} "
-                f"{'N/A':>9} {'N/A':>9} {'N/A':>9} {'N/A':>9} {'0':>5}"
-            )
+    matched = 0
+    total = sum(original_counter.values())
 
-    print("-" * 75)
+    for number, count in original_counter.items():
 
-    if all_scores:
-        overall = np.mean(all_scores) * 100
-        print(
-            f"{'OVERALL SCORE':<25} "
-            f"{overall:8.2f}%"
+        matched += min(
+            count,
+            rewritten_counter.get(number, 0)
         )
 
-    print("=" * 80)
+    score = (
+        matched / total
+    ) * 100
 
-    report_path = "/home/jovyan/work/sinllama/batch_eval_v13.json"
+    missing = []
 
-    report = {
-        "version": "v13",
-        "n_articles": len(selected),
-        "n_test_cases": len(all_scores),
-        "overall_score_pct": (
-            float(np.mean(all_scores) * 100)
-            if all_scores else 0
+    for number, count in original_counter.items():
+
+        if rewritten_counter.get(number, 0) < count:
+
+            missing.extend(
+                [number] * (
+                    count -
+                    rewritten_counter.get(number, 0)
+                )
+            )
+
+    extra = []
+
+    for number, count in rewritten_counter.items():
+
+        if number not in original_counter:
+
+            extra.extend(
+                [number] * count
+            )
+
+    return score, missing, extra
+
+
+# ================================================================
+# IMPORTANT WORD COVERAGE
+# ================================================================
+
+def score_fact_tokens(original, rewritten):
+
+    original_tokens = important_tokens(
+        original
+    )
+
+    rewritten_tokens = important_tokens(
+        rewritten
+    )
+
+    if not original_tokens:
+
+        return 100.0, [], []
+
+    rewritten_counter = Counter(
+        rewritten_tokens
+    )
+
+    matched = 0
+
+    missing = []
+
+    for token in original_tokens:
+
+        if rewritten_counter[token] > 0:
+
+            matched += 1
+
+            rewritten_counter[token] -= 1
+
+        else:
+
+            missing.append(token)
+
+    score = (
+        matched /
+        len(original_tokens)
+    ) * 100
+
+    return score, missing, []
+
+
+# ================================================================
+# CHARACTER N-GRAM SIMILARITY
+#
+# This helps detect whether the rewrite still contains the same
+# factual content even when Sinhala words have been rearranged.
+# ================================================================
+
+def char_ngrams(text, n=3):
+
+    text = normalize_text(text)
+
+    if len(text) < n:
+        return Counter()
+
+    return Counter(
+        text[i:i+n]
+        for i in range(
+            len(text) - n + 1
+        )
+    )
+
+
+def cosine_similarity_counter(a, b):
+
+    if not a or not b:
+        return 0.0
+
+    common = set(a) & set(b)
+
+    dot = sum(
+        a[x] * b[x]
+        for x in common
+    )
+
+    norm_a = math.sqrt(
+        sum(
+            value * value
+            for value in a.values()
+        )
+    )
+
+    norm_b = math.sqrt(
+        sum(
+            value * value
+            for value in b.values()
+        )
+    )
+
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+
+    return dot / (
+        norm_a * norm_b
+    )
+
+
+def score_content_similarity(
+    original,
+    rewritten,
+):
+
+    original_ngrams = char_ngrams(
+        original,
+        3,
+    )
+
+    rewritten_ngrams = char_ngrams(
+        rewritten,
+        3,
+    )
+
+    similarity = cosine_similarity_counter(
+        original_ngrams,
+        rewritten_ngrams,
+    )
+
+    return similarity * 100
+
+
+# ================================================================
+# STYLE DIVERGENCE
+#
+# The correctness metrics above only measure whether facts were
+# preserved -- a model that just copies the input verbatim trivially
+# scores 100% on all of them, even though it performed no style
+# rewrite at all. This checks whether the output actually differs
+# from the input.
+# ================================================================
+
+def score_style_divergence(original, rewritten):
+
+    norm_original = normalize_text(original)
+    norm_rewritten = normalize_text(rewritten)
+
+    is_verbatim_copy = (
+        norm_original == norm_rewritten
+    )
+
+    similarity_ratio = difflib.SequenceMatcher(
+        None,
+        norm_original,
+        norm_rewritten,
+    ).ratio()
+
+    divergence = (1 - similarity_ratio) * 100
+
+    return divergence, is_verbatim_copy
+
+
+# ================================================================
+# LENGTH PRESERVATION
+# ================================================================
+
+def score_length(original, rewritten):
+
+    original_length = len(
+        normalize_text(original)
+    )
+
+    rewritten_length = len(
+        normalize_text(rewritten)
+    )
+
+    if original_length == 0:
+        return 0.0
+
+    ratio = (
+        rewritten_length /
+        original_length
+    )
+
+    # Ideal around 1.0
+    # Accept roughly 60%-140%
+    if 0.60 <= ratio <= 1.40:
+
+        # Maximum score at 1.0
+        difference = abs(
+            ratio - 1.0
+        )
+
+        score = max(
+            0,
+            100 -
+            difference * 200
+        )
+
+    else:
+
+        score = max(
+            0,
+            100 -
+            abs(ratio - 1.0) * 100
+        )
+
+    return score
+
+
+# ================================================================
+# PENALIZE FABRICATED NUMBERS
+# ================================================================
+
+def score_extra_numbers(
+    original,
+    rewritten,
+):
+
+    original_numbers = Counter(
+        extract_numbers(original)
+    )
+
+    rewritten_numbers = Counter(
+        extract_numbers(rewritten)
+    )
+
+    extra = 0
+
+    for number, count in rewritten_numbers.items():
+
+        allowed = original_numbers.get(
+            number,
+            0,
+        )
+
+        if count > allowed:
+
+            extra += count - allowed
+
+    total_rewritten = sum(
+        rewritten_numbers.values()
+    )
+
+    if total_rewritten == 0:
+
+        return 100.0, []
+
+    if extra == 0:
+
+        return 100.0, []
+
+    penalty = (
+        extra /
+        total_rewritten
+    ) * 100
+
+    score = max(
+        0,
+        100 - penalty * 2
+    )
+
+    extras = []
+
+    for number, count in rewritten_numbers.items():
+
+        allowed = original_numbers.get(
+            number,
+            0,
+        )
+
+        if count > allowed:
+
+            extras.extend(
+                [number] *
+                (count - allowed)
+            )
+
+    return score, extras
+
+
+# ================================================================
+# REPETITION / GARBAGE CHECK
+# ================================================================
+
+def score_quality(rewritten):
+
+    text = normalize_text(
+        rewritten
+    )
+
+    if not text:
+
+        return 0.0
+
+    # Extremely short output
+    if len(text) < 100:
+
+        return 30.0
+
+    # Detect repeated phrase stuttering
+    words = tokenize_sinhala(
+        text
+    )
+
+    if len(words) >= 8:
+
+        repeated = 0
+
+        for i in range(
+            len(words) - 5
+        ):
+
+            phrase1 = words[i:i+3]
+            phrase2 = words[i+3:i+6]
+
+            if phrase1 == phrase2:
+
+                repeated += 1
+
+        if repeated >= 3:
+
+            return 30.0
+
+    return 100.0
+
+
+# ================================================================
+# OVERALL CORRECTNESS
+#
+# WEIGHTING:
+#
+#   Numbers          30%
+#   Fact tokens      35%
+#   Content similarity 20%
+#   Length           10%
+#   Output quality    5%
+#
+# This is deliberately NOT BLEU.
+# BLEU would unfairly punish legitimate style rewriting.
+# ================================================================
+
+def calculate_correctness(
+    original,
+    rewritten,
+):
+
+    number_score, missing_numbers, extra_numbers = (
+        score_numbers(
+            original,
+            rewritten,
+        )
+    )
+
+    fact_score, missing_facts, _ = (
+        score_fact_tokens(
+            original,
+            rewritten,
+        )
+    )
+
+    similarity_score = (
+        score_content_similarity(
+            original,
+            rewritten,
+        )
+    )
+
+    length_score = score_length(
+        original,
+        rewritten,
+    )
+
+    quality_score = score_quality(
+        rewritten,
+    )
+
+    extra_number_score, extra_numbers_2 = (
+        score_extra_numbers(
+            original,
+            rewritten,
+        )
+    )
+
+    style_divergence, is_verbatim_copy = (
+        score_style_divergence(
+            original,
+            rewritten,
+        )
+    )
+
+    # Average number preservation with hallucination penalty
+    number_final = (
+        number_score * 0.75
+        +
+        extra_number_score * 0.25
+    )
+
+    final_score = (
+
+        number_final * 0.30
+
+        +
+
+        fact_score * 0.35
+
+        +
+
+        similarity_score * 0.20
+
+        +
+
+        length_score * 0.10
+
+        +
+
+        quality_score * 0.05
+    )
+
+    return {
+
+        "overall": round(
+            final_score,
+            2,
         ),
-        "targets": {
-            "entity_preservation": FACT_ENTITY_PRESERVATION_TARGET,
-            "length_ratio_min": LENGTH_RATIO_MIN,
-            "length_ratio_max": LENGTH_RATIO_MAX,
-        },
-        "per_style": {}
+
+        "numbers": round(
+            number_final,
+            2,
+        ),
+
+        "facts": round(
+            fact_score,
+            2,
+        ),
+
+        "content_similarity": round(
+            similarity_score,
+            2,
+        ),
+
+        "length": round(
+            length_score,
+            2,
+        ),
+
+        "quality": round(
+            quality_score,
+            2,
+        ),
+
+        "missing_numbers": list(
+            dict.fromkeys(
+                missing_numbers
+            )
+        ),
+
+        "extra_numbers": list(
+            dict.fromkeys(
+                extra_numbers +
+                extra_numbers_2
+            )
+        ),
+
+        "missing_facts": list(
+            dict.fromkeys(
+                missing_facts
+            )
+        ),
+
+        "style_divergence": round(
+            style_divergence,
+            2,
+        ),
+
+        "is_verbatim_copy": is_verbatim_copy,
     }
 
-    for style_id in sorted(STYLE_IDS):
-        vals = scores_by_style[style_id]
-        facts = entity_scores_by_style[style_id]
-        miss = missing_by_style[style_id]
-        new = hallucination_by_style[style_id]
 
-        report["per_style"][style_id] = {
-            "avg_score_pct": float(np.mean(vals) * 100) if vals else None,
-            "avg_entity_preservation_pct": (
-                float(np.mean(facts) * 100) if facts else None
-            ),
-            "avg_missing_entities": float(np.mean(miss)) if miss else None,
-            "avg_new_fact_signals": float(np.mean(new)) if new else None,
-            "n": len(vals),
-        }
+# ================================================================
+# PRINT SCORE
+# ================================================================
 
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+def print_score(
+    style_id,
+    result,
+):
 
-    print(f"\n💾 Report saved to: {report_path}")
+    print("\n" + "-" * 80)
 
-# ============================================================
+    print(
+        f"📊 CORRECTNESS: "
+        f"{style_id}"
+    )
+
+    print(
+        f"   ⭐ Overall correctness : "
+        f"{result['overall']:.2f}%"
+    )
+
+    print(
+        f"   Numbers preserved      : "
+        f"{result['numbers']:.2f}%"
+    )
+
+    print(
+        f"   Important facts        : "
+        f"{result['facts']:.2f}%"
+    )
+
+    print(
+        f"   Content similarity     : "
+        f"{result['content_similarity']:.2f}%"
+    )
+
+    print(
+        f"   Length preservation    : "
+        f"{result['length']:.2f}%"
+    )
+
+    print(
+        f"   Output quality         : "
+        f"{result['quality']:.2f}%"
+    )
+
+    print(
+        f"   Style divergence        : "
+        f"{result['style_divergence']:.2f}%"
+    )
+
+    if result["is_verbatim_copy"]:
+
+        print(
+            "\n   🚨 VERBATIM COPY: output is character-identical "
+            "to the input. No style rewrite occurred -- the "
+            "correctness score above is meaningless for this style."
+        )
+
+    if result["missing_numbers"]:
+
+        print(
+            "\n   ⚠️ Missing numbers:"
+        )
+
+        print(
+            "   ",
+            ", ".join(
+                result[
+                    "missing_numbers"
+                ]
+            )
+        )
+
+    if result["extra_numbers"]:
+
+        print(
+            "\n   ⚠️ Extra numbers:"
+        )
+
+        print(
+            "   ",
+            ", ".join(
+                result[
+                    "extra_numbers"
+                ]
+            )
+        )
+
+    if result["missing_facts"]:
+
+        print(
+            "\n   ⚠️ Some important "
+            "source words/facts not detected:"
+        )
+
+        print(
+            "   ",
+            ", ".join(
+                result[
+                    "missing_facts"
+                ][:30]
+            )
+        )
+
+
+# ================================================================
 # MAIN
-# ============================================================
+# ================================================================
 
 def main():
-    # Determine mode: python test_style_rewriter_v13.py --batch
-    batch_mode = "--batch" in sys.argv
 
-    print()
-    print("=" * 80)
-    print("  SinhalaJournal-LLM | Style Rewriter Test v13")
-    print(f"  Mode: {'BATCH EVALUATION' if batch_mode else 'INTERACTIVE'}")
-    print("=" * 80)
+    set_seed(SEED)
 
-    torch.manual_seed(SEED)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(SEED)
+    print(
+        "\n" +
+        "=" * 80
+    )
 
-    # Check paths
-    for label, path in [("Base model", BASE_MODEL), ("Adapter", ADAPTER_PATH), ("Dataset", DATASET_PATH)]:
-        if os.path.exists(path):
-            print(f"   ✅ {label} found")
+    print(
+        "  SinhalaJournal-LLM | "
+        "5-STYLE CORRECTNESS TEST"
+    )
+
+    print(
+        "=" * 80
+    )
+
+    print(
+        "\nSame article will be rewritten "
+        "into exactly 5 styles."
+    )
+
+    print(
+        "\nCorrectness measures FACT "
+        "preservation, not style similarity."
+    )
+
+    print(
+        "\nGeneration:"
+    )
+
+    print(
+        f"  Temperature       : "
+        f"{TEMPERATURE}"
+    )
+
+    print(
+        f"  Top-P             : "
+        f"{TOP_P}"
+    )
+
+    print(
+        f"  Top-K             : "
+        f"{TOP_K}"
+    )
+
+    print(
+        f"  Repetition        : "
+        f"{REPETITION_PENALTY}"
+    )
+
+    print(
+        f"  Max new tokens    : "
+        f"{GEN_MAX_NEW_TOKENS}"
+    )
+
+    # ------------------------------------------------------------
+    # PATH CHECK
+    # ------------------------------------------------------------
+
+    print(
+        "\n🔍 Checking paths..."
+    )
+
+    if not Path(BASE_MODEL).exists():
+
+        raise FileNotFoundError(
+            f"Base model not found:\n"
+            f"{BASE_MODEL}"
+        )
+
+    print(
+        "   ✅ Base model found"
+    )
+
+    if not Path(ADAPTER_PATH).exists():
+
+        raise FileNotFoundError(
+            f"Adapter not found:\n"
+            f"{ADAPTER_PATH}"
+        )
+
+    print(
+        "   ✅ Adapter found"
+    )
+
+    # ------------------------------------------------------------
+    # LOAD
+    # ------------------------------------------------------------
+
+    tokenizer = load_tokenizer()
+
+    model = load_model(tokenizer)
+
+    # ------------------------------------------------------------
+    # PRINT ORIGINAL
+    # ------------------------------------------------------------
+
+    print(
+        "\n" +
+        "=" * 80
+    )
+
+    print(
+        "📰 ORIGINAL ARTICLE"
+    )
+
+    print(
+        "=" * 80
+    )
+
+    print(
+        ARTICLE
+    )
+
+    # ------------------------------------------------------------
+    # TEST ALL 5 STYLES
+    # ------------------------------------------------------------
+
+    results = {}
+
+    style_names = {
+
+        "style_1_formal_news":
+            "FORMAL NEWS",
+
+        "style_2_editorial":
+            "EDITORIAL",
+
+        "style_3_sports":
+            "SPORTS",
+
+        "style_4_youth":
+            "YOUTH",
+
+        "style_5_feature":
+            "FEATURE",
+    }
+
+    for index, style_id in enumerate(
+        STYLE_RULES.keys(),
+        start=1,
+    ):
+
+        style_name = style_names[
+            style_id
+        ]
+
+        print(
+            "\n\n" +
+            "=" * 80
+        )
+
+        print(
+            f"  {index}/5  "
+            f"{style_name}"
+        )
+
+        print(
+            "=" * 80
+        )
+
+        print(
+            "\n🔄 Generating rewrite..."
+        )
+
+        try:
+
+            rewritten = generate_rewrite(
+                model,
+                tokenizer,
+                style_id,
+                ARTICLE,
+            )
+
+        except Exception as e:
+
+            print(
+                "\n❌ Generation failed:"
+            )
+
+            print(
+                type(e).__name__,
+                str(e),
+            )
+
+            rewritten = ""
+
+        if not rewritten:
+
+            print(
+                "\n❌ EMPTY OUTPUT"
+            )
+
+            result = {
+                "overall": 0.0,
+                "numbers": 0.0,
+                "facts": 0.0,
+                "content_similarity": 0.0,
+                "length": 0.0,
+                "quality": 0.0,
+                "missing_numbers": [],
+                "extra_numbers": [],
+                "missing_facts": [],
+                "style_divergence": 0.0,
+                "is_verbatim_copy": False,
+            }
+
         else:
-            print(f"   ❌ {label} NOT found: {path}")
-            return
 
-    records = load_dataset()
-    patched_base = None
+            # ----------------------------------------------------
+            # OUTPUT
+            # ----------------------------------------------------
 
-    try:
-        model, tokenizer, patched_base = load_model()
-    except Exception as e:
-        print(f"\n❌ Model loading failed: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        return
+            print(
+                "\n📝 REWRITTEN ARTICLE:"
+            )
 
-    try:
-        if batch_mode:
-            run_batch_eval(model, tokenizer, records, n=BATCH_EVAL_N)
+            print(
+                "-" * 80
+            )
+
+            print(
+                rewritten
+            )
+
+            # ----------------------------------------------------
+            # SCORE
+            # ----------------------------------------------------
+
+            result = calculate_correctness(
+                ARTICLE,
+                rewritten,
+            )
+
+        results[style_id] = {
+            "style": style_name,
+            "rewritten": rewritten,
+            "score": result,
+        }
+
+        print_score(
+            style_name,
+            result,
+        )
+
+    # ============================================================
+    # FINAL SUMMARY
+    # ============================================================
+
+    print(
+        "\n\n" +
+        "=" * 80
+    )
+
+    print(
+        "  FINAL CORRECTNESS SUMMARY"
+    )
+
+    print(
+        "=" * 80
+    )
+
+    print(
+        "\n"
+    )
+
+    print(
+        f"{'STYLE':<20}"
+        f"{'CORRECTNESS':>15}"
+        f"{'DIVERGENCE':>15}"
+        f"{'COPY?':>10}"
+    )
+
+    print(
+        "-" * 63
+    )
+
+    valid_scores = []
+    verbatim_copies = 0
+
+    for style_id, data in results.items():
+
+        score = data["score"][
+            "overall"
+        ]
+
+        divergence = data["score"][
+            "style_divergence"
+        ]
+
+        is_copy = data["score"][
+            "is_verbatim_copy"
+        ]
+
+        if is_copy:
+            verbatim_copies += 1
+
+        print(
+            f"{data['style']:<20}"
+            f"{score:>14.2f}%"
+            f"{divergence:>14.2f}%"
+            f"{'YES' if is_copy else 'no':>10}"
+        )
+
+        valid_scores.append(score)
+
+    print(
+        "-" * 63
+    )
+
+    average = (
+        sum(valid_scores) /
+        len(valid_scores)
+        if valid_scores
+        else 0
+    )
+
+    print(
+        f"{'AVERAGE':<20}"
+        f"{average:>14.2f}%"
+    )
+
+    if verbatim_copies:
+
+        print(
+            f"\n🚨 {verbatim_copies}/{len(results)} styles produced "
+            f"a VERBATIM COPY of the input (0% style divergence). "
+            f"The correctness average above is inflated by these -- "
+            f"a copy trivially preserves every fact. Treat this "
+            f"adapter as NOT rewriting style until divergence > 0 "
+            f"is confirmed on real generations."
+        )
+
+    # ------------------------------------------------------------
+    # PASS / WARNING
+    # ------------------------------------------------------------
+
+    print(
+        "\n"
+    )
+
+    for style_id, data in results.items():
+
+        score = data["score"][
+            "overall"
+        ]
+
+        if score >= 90:
+
+            status = "🟢 EXCELLENT"
+
+        elif score >= 80:
+
+            status = "🟢 GOOD"
+
+        elif score >= 70:
+
+            status = "🟡 ACCEPTABLE"
+
+        elif score >= 60:
+
+            status = "🟠 NEEDS IMPROVEMENT"
+
         else:
-            run_interactive(model, tokenizer, records)
-    finally:
-        if patched_base is not None:
-            shutil.rmtree(patched_base, ignore_errors=True)
-            print("\n🧹 Temporary tokenizer directory removed.")
 
-    print()
-    print("=" * 80)
-    print("✅ COMPLETE")
-    print("=" * 80)
+            status = "🔴 POOR"
 
+        print(
+            f"{data['style']:<20}"
+            f"{status}"
+        )
+
+    # ============================================================
+    # SAVE JSON REPORT
+    # ============================================================
+
+    report_path = (
+        Path(ADAPTER_PATH)
+        / "style_correctness_test.json"
+    )
+
+    report = {
+
+        "base_model": BASE_MODEL,
+
+        "adapter": ADAPTER_PATH,
+
+        "article": ARTICLE,
+
+        "generation": {
+
+            "temperature":
+                TEMPERATURE,
+
+            "top_p":
+                TOP_P,
+
+            "top_k":
+                TOP_K,
+
+            "repetition_penalty":
+                REPETITION_PENALTY,
+
+            "max_new_tokens":
+                GEN_MAX_NEW_TOKENS,
+        },
+
+        "results": results,
+
+        "average_correctness":
+            round(
+                average,
+                2,
+            ),
+    }
+
+    with open(
+        report_path,
+        "w",
+        encoding="utf-8",
+    ) as f:
+
+        json.dump(
+            report,
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    print(
+        "\n💾 Report saved:"
+    )
+
+    print(
+        f"   {report_path}"
+    )
+
+    print(
+        "\n✅ 5-style test completed."
+    )
+
+
+# ================================================================
+# RUN
+# ================================================================
 
 if __name__ == "__main__":
     main()

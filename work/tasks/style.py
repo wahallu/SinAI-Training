@@ -1,183 +1,125 @@
 """Style-rewriter task — owned independently of grammar/headline/summarizer.
-Editing this file (including STYLE_INSTRUCTIONS — add a new style by adding
-a key here, nothing else needs to change) only affects style rewriting; it
-cannot affect the other three tasks."""
 
+IMPORTANT: STYLE_INSTRUCTIONS and the prompt shape built by prompt_style()
+must stay byte-for-byte identical (modulo the public style-name keys, see
+STYLE_ID_MAP) to STYLE_RULES / format_prompt() in
+work/sinllama/scripts/train_style.py. The deployed adapter (style_sinllama_v*)
+was LoRA-fine-tuned on that exact prompt shape — same "### Instruction:" /
+"### FACT PRESERVATION RULES:" / "### Input:" / "### Response:" structure,
+same English rule text. Serving any other prompt shape here (different
+instruction wording, a different content marker, a missing FACT
+PRESERVATION RULES block) puts every request out-of-distribution for the
+adapter and it falls back to copying the input near-verbatim regardless of
+requested style — that's what v12 was doing before this file was
+synced to train_style.py.
+
+If you add a new style, add it to STYLE_INSTRUCTIONS AND STYLE_ID_MAP here,
+AND add a matching entry to STYLE_RULES in train_style.py before the next
+training run — the adapter has no signal for a style it never trained on.
+"""
+
+# Public API style name -> STYLE_IDS key used in train_style.py's
+# STYLE_RULES / training_config.json. Keep in sync with STYLE_IDS there.
+STYLE_ID_MAP: dict[str, str] = {
+    "formal": "style_1_formal_news",
+    "editorial": "style_2_editorial",
+    "sports": "style_3_sports",
+    "youth": "style_4_youth",
+    "feature": "style_5_feature",
+}
+
+# Verbatim copy of STYLE_RULES from train_style.py, keyed by the public
+# style name instead of the style_id.
 STYLE_INSTRUCTIONS: dict[str, str] = {
-"formal": """
-ඔබ සිංහල ප්‍රධාන පුවත් වාර්තාකරණ විශේෂඥයෙකි.
+    "formal": """
+Write the article as a professional Sinhala news report.
 
-මෙය සාම්ප්‍රදායික සිංහල ප්‍රධාන පුවත් වාර්තාවක් ලෙස ලියන්න.
-
-නීති:
-
-- වෛෂයික සහ නිෂ්පාක්ෂික භාෂාව භාවිත කරන්න.
-- වැදගත්ම කරුණ මුලින් දක්වන්න.
-- නිවැරදි පුවත් වාර්තාකරණ වාක්‍ය රටා භාවිත කරන්න.
-- "ඇත", "තිබේ", "වේ", "විය", "කරයි", "සඳහන් කළේය"
-  වැනි සුදුසු ක්‍රියාපද භාවිත කරන්න.
-- passive construction අවශ්‍ය අවස්ථාවලදී "විසින්" නිවැරදිව භාවිත කරන්න.
-- "එසේම", "තවද", "කෙසේ වෙතත්", "මේ අතර" වැනි
-  සම්බන්ධක වචන අවශ්‍ය තැන්වල පමණක් භාවිත කරන්න.
-- අදහස් හෝ විශ්ලේෂණ එකතු නොකරන්න.
-- sensational language භාවිත නොකරන්න.
-- source article එකේ සියලු තොරතුරු පවත්වා ගන්න.
-- article එක කෙටි නොකරන්න.
-
-මෙම ලිපිය formal news style එකට නැවත ලියන්න.
+- Objective and factual
+- Clear journalistic Sinhala
+- Most important information first
+- Formal vocabulary
+- No personal opinion
+- No unnecessary commentary
+- Preserve all important facts
+- Preserve names, numbers, dates and places
+- Do not invent information
 """,
-    "sports": """
-ඔබ සිංහල ක්‍රීඩා පුවත්පත් කලාවේ විශේෂඥයෙකි.
 
-පහත නීති අනිවාර්යයෙන්ම අනුගමනය කරන්න:
-
-1. ලිපියේ ඇති වඩාත්ම වැදගත් හෝ තීරණාත්මක ක්‍රීඩා සිදුවීම පළමු වාක්‍යයට ගෙන එන්න. හැකි සෑම විටම ප්‍රතිඵලය, ජයග්‍රහණය, පරාජය, ලකුණු තත්ත්වය හෝ තරගයේ තීරණාත්මක සිදුවීම මුලින් සඳහන් කරන්න.
-
-2. ක්‍රීඩා පුවත්පත් ශෛලියක් භාවිතා කරන්න. ලිපිය උද්වේගකර, වේගවත් සහ ක්‍රියාශීලී විය යුතු නමුත් අතිශයෝක්තියෙන් හෝ කෘත්‍රිම ලෙස නොලියන්න.
-
-3. ක්‍රියාකාරී සහ ක්‍රීඩා පුවත් සඳහා ස්වභාවික ක්‍රියා පද භාවිතා කරන්න. උදාහරණ:
-   "ජයග්‍රහණය කළේය", "පරාජය කළේය", "පහර දුන්නේය",
-   "ලකුණු රැස් කළේය", "කඩුලු දවා ගත්තේය",
-   "විකට්ටුවක් ලබා ගත්තේය", "පන්දු යැවීය",
-   "තරගය පාලනය කළේය", "ඉදිරියට පැමිණියේය",
-   "ජය තහවුරු කළේය".
-
-4. ක්‍රීඩාවට අදාළ ස්වභාවික පද සහ වාක්‍ය රටා භාවිතා කරන්න. උදාහරණ:
-   "තීරණාත්මක අවස්ථාවේදී", "තරගයේ අවසන් අදියරේදී",
-   "ප්‍රබල ආරම්භයක් ලබා ගනිමින්", "ලකුණු පුවරුවේ",
-   "ජයග්‍රහණය තහවුරු කරමින්", "තරගය පුරා",
-   "විශිෂ්ට දක්ෂතාවක් දක්වමින්".
-
-5. මුල් ලිපියේ ඇති සියලුම කරුණු, ක්‍රීඩකයන්ගේ නම්, කණ්ඩායම්, තරග, ස්ථාන, දිනයන්, ලකුණු, සංඛ්‍යා, වාර්තා සහ ප්‍රතිඵල නිවැරදිව ආරක්ෂා කරන්න. කිසිදු කරුණක් වෙනස් නොකරන්න.
-
-6. මුල් ලිපියේ නොමැති නව ක්‍රීඩකයෙකු, කණ්ඩායමක්, ලකුණක්, වාර්තාවක්, තරග ප්‍රතිඵලයක්, සිදුවීමක් හෝ සංඛ්‍යාවක් කිසිවිටෙකත් එකතු නොකරන්න.
-
-7. ක්‍රීඩා ලිපියක් ලෙස පෙනෙන්නට පමණක් "විශිෂ්ට", "ඓතිහාසික", "අතිවිශිෂ්ට", "නාටකීය" වැනි වචන අනිවාර්යයෙන් එකතු නොකරන්න. මුල් කරුණු අනුව ස්වභාවිකව ගැළපෙන විට පමණක් භාවිතා කරන්න.
-
-8. මුල් ලිපියේ ඇති උපුටා දැක්වීම් (quotes) තිබේ නම් ඒවායේ වචන වෙනස් නොකරන්න. උපුටා දැක්වීම් තුළ නව වචන එකතු නොකරන්න.
-
-9. මුල් ලිපියේ ඉංග්‍රීසි වචන නොතිබේ නම් අනවශ්‍ය ඉංග්‍රීසි වචන එකතු නොකරන්න. ක්‍රීඩා ක්ෂේත්‍රයේ සාමාන්‍යයෙන් භාවිතා වන ඉංග්‍රීසි පදයක් මුල් ලිපියේ තිබේ නම් පමණක් එය ආරක්ෂා කරන්න.
-
-10. නැවත ලියන ලිපියේ දිග මුල් ලිපියේ දිගට ආසන්නව තබා ගන්න. කරුණු ඉවත් කර කෙටි සාරාංශයක් බවට පත් නොකරන්න.
-
-11. වාක්‍ය කෙටි, පැහැදිලි සහ ක්‍රියාශීලීව තබන්න. අනවශ්‍ය ලෙස දිගු වාක්‍ය හෝ අතිශය සාහිත්‍යමය වාක්‍ය රටා භාවිතා නොකරන්න.
-
-12. ක්‍රීඩා ලිපියේ රිද්මය පවත්වා ගන්න. ප්‍රතිඵලය → තීරණාත්මක ක්‍රියාව → ප්‍රධාන දක්ෂතා → අනෙකුත් වැදගත් කරුණු යන ස්වාභාවික පුවත් ප්‍රවාහයක් භාවිතා කරන්න.
-
-13. ක්‍රිකට් ලිපියක් නම් ක්‍රිකට් ක්‍රීඩාවට අදාළ පද භාවිතා කරන්න. පාපන්දු ලිපියක් නම් පාපන්දු ක්‍රීඩාවට අදාළ පද භාවිතා කරන්න. වෙනත් ක්‍රීඩාවක් නම් එම ක්‍රීඩාවට අදාළ ස්වභාවික පද භාවිතා කරන්න. එක් ක්‍රීඩාවක පද තවත් ක්‍රීඩාවකට යොදා නොගන්න.
-
-14. ලිපියේ ඇති සංඛ්‍යා, ලකුණු, ඕවර, කඩුලු, කාලය සහ අනෙකුත් සංඛ්‍යාත්මක තොරතුරු හැකි තරම් මුල් ආකාරයෙන්ම තබා ගන්න.
-
-15. අතිරේක විස්මයන් සලකුණු (!) භාවිතා නොකරන්න. මුල් ලිපියේ අවශ්‍යතාවයක් තිබේ නම් උපරිම වශයෙන් එක් විස්මය සලකුණක් පමණක් භාවිතා කරන්න.
-
-16. අකුරු වැරදි, ව්‍යාකරණ දෝෂ හෝ අර්ථය වෙනස් කරන වචන භාවිතා නොකරන්න. ස්වභාවික සහ නිවැරදි සිංහල භාවිතා කරන්න.
-
-17. අවසාන වාක්‍යය හදිසියේ කපා නොදමන්න. සම්පූර්ණ සහ ව්‍යාකරණානුකූල වාක්‍ය සමඟ ලිපිය අවසන් කරන්න.
-
-18. ප්‍රධාන අරමුණ වන්නේ "ක්‍රීඩා පුවත්පත් ශෛලිය" ලබා දීමයි. කරුණු වෙනස් කිරීම, නව කරුණු නිර්මාණය කිරීම හෝ කෘත්‍රිම නාටකීය බවක් එකතු කිරීම කිසිවිටෙකත් නොකරන්න.
-""",
-    "youth": """
-ඔබ තරුණ පාඨකයන් සඳහා ලියන සිංහල ලේඛකයෙකි.
-
-තරුණ පාඨකයන්ට පහසුවෙන් කියවිය හැකි modern Sinhala
-news style එකකට article එක නැවත ලියන්න.
-
-නීති:
-
-- සරල සහ ස්වභාවික සිංහල භාවිත කරන්න.
-- වාක්‍ය සාපේක්ෂව කෙටි සහ පැහැදිලි විය හැක.
-- conversational tone සුළු වශයෙන් භාවිත කළ හැක.
-- "දන්නවද?" වැනි expressions අවශ්‍ය නම් උපරිම එක් වරක්
-  පමණක් භාවිත කළ හැක.
-- "යාලුවනේ" වැනි filler words අධික ලෙස භාවිත නොකරන්න.
-- social-media style එකකට පත් නොකරන්න.
-- emojis භාවිත නොකරන්න.
-- slang අධික ලෙස භාවිත නොකරන්න.
-- source article එකේ facts සියල්ල තබන්න.
-- source article එකේ නැති excitement, emotion,
-  opinion හෝ conclusion එකතු නොකරන්න.
-- forced ending එකක් භාවිත නොකරන්න.
-- "ඒ නිසා යාලුවනේ, මේ ගැන අනිවාර්යයෙන්ම දැනගන්න!"
-  වැනි fixed ending භාවිත නොකරන්න.
-
-Youth-friendly වීම යනු facts වෙනස් කිරීම නොවේ.
-
-මෙම ලිපිය youth news style එකට නැවත ලියන්න.
-""",
     "editorial": """
-ඔබ සිංහල කතුවැකි/විශ්ලේෂණ විශේෂඥයෙකි.
+Rewrite the article in a Sinhala editorial / analytical style.
 
-ලිපිය editorial / analytical newspaper style එකකට
-නැවත ලියන්න.
-
-නීති:
-
-- කරුණු අතර logical flow එකක් ඇති කරන්න.
-- හේතු සහ ප්‍රතිඵල source article එකෙන් පැහැදිලිව
-  ලබාගත හැකි අවස්ථාවලදී පමණක් සම්බන්ධ කරන්න.
-- analytical language භාවිත කළ හැකි නමුත්
-  source එකේ නැති opinion එකක් එකතු නොකරන්න.
-- "සැලකිය යුතුය", "පෙනී යයි", "මේ අනුව" වැනි
-  expressions අවශ්‍ය තැන්වල පමණක් භාවිත කරන්න.
-- "අපි", "අපට" වැනි first-person expressions
-  අධික ලෙස භාවිත නොකරන්න.
-- source එකේ facts වලින් beyond conclusions
-  ලබා නොදෙන්න.
-- කිසිදු political, social හෝ moral opinion එකක්
-  model විසින් නිර්මාණය නොකරන්න.
-- forced conclusion එකක් එකතු නොකරන්න.
-- විශේෂයෙන් පහත වාක්‍යය සෑම article එකකටම දමන්න එපා:
-  "මෙම සියලු කරුණු සමස්තයක් ලෙස සලකන කල..."
-
-Editorial tone එක භාවිත කළත් article එකේ factual
-content සම්පූර්ණයෙන්ම පවත්වා ගන්න.
-
-මෙම ලිපිය editorial style එකට නැවත ලියන්න.
+- Analytical and reflective tone
+- Discuss the significance of the reported facts
+- Use natural editorial Sinhala
+- May use phrases such as "සැලකිය යුතුය" or "සමස්තයක් ලෙස"
+  only when they naturally fit
+- Do not invent facts
+- Do not exaggerate
+- Preserve names, numbers, dates and places
+- Preserve the factual basis of the original article
 """,
+
+    "sports": """
+Rewrite the article in a Sinhala sports-news style.
+
+- Energetic but professional
+- Emphasize important actions, events and outcomes
+- Use natural sports journalism vocabulary where appropriate
+- Do not force sports terminology into non-sports stories
+- Do not invent sporting events or actions
+- Preserve all facts, names, numbers and dates
+""",
+
+    "youth": """
+Rewrite the article in a modern, accessible Sinhala style
+suitable for younger readers.
+
+- Conversational but grammatically correct Sinhala
+- Simple and clear sentences
+- Engaging tone
+- Natural modern vocabulary
+- Do not force greetings into every article
+- Do not use "යාලුවනේ" unless it naturally fits
+- Do not add information
+- Preserve names, numbers, dates and factual details
+""",
+
     "feature": """
-ඔබ සිංහල විශේෂාංග/කතාන්දර ලේඛන විශේෂඥයෙකි.
+Rewrite the article in a Sinhala feature-writing style.
 
-ලිපිය feature journalism style එකකින් නැවත ලියන්න.
-
-නමුත් මෙය factual news dataset එකක් බැවින් පහත නීති
-අතිශයින් වැදගත් වේ:
-
-- source එකේ නැති scene එකක් නිර්මාණය නොකරන්න.
-- source එකේ නැති weather එකක් එකතු නොකරන්න.
-- source එකේ නැති atmosphere එකක් එකතු නොකරන්න.
-- source එකේ නැති emotions එකතු නොකරන්න.
-- source එකේ නැති personal experience එකක් එකතු නොකරන්න.
-- source එකේ නැති dialogue එකක් එකතු නොකරන්න.
-- source එකේ නැති human-interest detail එකක් එකතු නොකරන්න.
-- fictional storytelling නොකරන්න.
-
-Feature style එක ලබාදිය යුත්තේ:
-
-- වඩාත් smooth narrative flow එකකින්,
-- සිද්ධියට context එකක් ලබාදෙන ආකාරයෙන්,
-- විවිධ දිගින් යුතු ස්වභාවික වාක්‍ය භාවිතයෙන්,
-- source එකේ තිබෙන මානව හෝ පසුබිම් කරුණු
-  ඉස්මතු කිරීමෙන් පමණි.
-
-Source එකේ facts පමණක් භාවිත කරන්න.
-
-Forced dramatic opening භාවිත නොකරන්න.
-
-"අඳුරු උදෑසනක..."
-"නිහඬ පරිසරය තුළ..."
-"මෙම අභිමාණීය..."
-වැනි source එකේ නැති descriptive phrases
-අවශ්‍යතාවයකින් තොරව එකතු නොකරන්න.
-
-Forced ending එකක් භාවිත නොකරන්න.
-
-"මෙම කතාව අනාගත පරම්පරාවට ද ආදර්ශයක් වනු ඇත"
-වැනි fixed sentence එකක් සෑම article එකකටම දමන්න එපා.
-
-මෙම ලිපිය factual feature journalism style එකට
-නැවත ලියන්න.
+- Engaging narrative presentation
+- More descriptive language where appropriate
+- Smooth transitions
+- Human-interest perspective where supported by the source
+- Do not invent scenes, emotions or events
+- Do not fabricate background information
+- Preserve all factual information
 """,
 }
+
+# Verbatim copy of the block train_style.py::format_prompt() inserts
+# between the style instruction and "### Input:" on every training example.
+FACT_PRESERVATION_RULES = (
+    "### FACT PRESERVATION RULES:\n"
+    "1. Preserve the meaning of every factual statement.\n"
+    "2. Do not add facts that are absent from the source.\n"
+    "3. Do not remove important factual information.\n"
+    "4. Preserve all person names exactly.\n"
+    "5. Preserve all organization names exactly.\n"
+    "6. Preserve all locations exactly.\n"
+    "7. Preserve numbers and numerical values exactly.\n"
+    "8. Preserve dates exactly.\n"
+    "9. Preserve quoted text exactly.\n"
+    "10. Preserve gender-marked honorifics such as "
+    "මහතා / මහත්මිය.\n"
+    "11. Do not invent durations, measurements or statistics.\n"
+    "12. Do not translate proper names unnecessarily.\n"
+    "13. Do not introduce unrelated information.\n"
+    "14. Change the writing STYLE, not the underlying facts.\n"
+    "15. Use natural Sinhala grammar and morphology.\n"
+    "16. Do not deliberately replace correct Sinhala words with "
+    "different words merely to make the sentence different.\n"
+)
 
 DEFAULT_STYLE = "formal"
 VALID_STYLES  = set(STYLE_INSTRUCTIONS.keys())
@@ -187,10 +129,13 @@ def prompt_style(text: str, style: str = DEFAULT_STYLE, **_) -> str:
     instruction = STYLE_INSTRUCTIONS.get(style, STYLE_INSTRUCTIONS[DEFAULT_STYLE])
     return (
         "### Instruction:\n"
-        "ඔබ සිංහල ලේඛන විශේෂඥයෙකි.\n"
-        f"{instruction}\n"
-        "අර්ථය වෙනස් නොකරන්න. ස්වාභාවික සිංහල භාවිත කරන්න.\n\n"
-        f"Text:\n{text}\n\n"
+        f"{instruction.strip()}\n\n"
+
+        f"{FACT_PRESERVATION_RULES}\n"
+
+        "### Input:\n"
+        f"{text.strip()}\n\n"
+
         "### Response:\n"
     )
 
