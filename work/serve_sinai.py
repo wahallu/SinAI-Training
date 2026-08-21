@@ -518,6 +518,19 @@ def run_mt5_generation(raw_text: str, active_adapter: str = "mt5-base") -> dict:
                 num_beams=4,
                 length_penalty=2.0,
                 early_stopping=True,
+                # Without repetition suppression, beam search on this
+                # encoder-decoder generate() call degenerates into looping
+                # the same token/phrase forever (observed live 2026-08-21:
+                # "AnatomAnatomAnatom..." from mt5-base, a repeated Thai
+                # phrase from summarization_mt5_v01) — no_repeat_ngram_size
+                # is safe here (unlike the SinLLaMA causal-LM path, where
+                # it's deliberately omitted — see tasks/summarizer.py — the
+                # decoder's generation history here is only its own output,
+                # not the source article, so this can't block echoing the
+                # article's opening). This is the standard T5/mT5
+                # summarization decoding recipe (num_beams=4,
+                # length_penalty=2.0, no_repeat_ngram_size=3).
+                no_repeat_ngram_size=3,
             )
 
         summary = _MT5_TOKENIZER.decode(outputs[0], skip_special_tokens=True).strip()
