@@ -1,16 +1,27 @@
 # ================================================================
 # SinhalaJournal-LLM
-# STYLE ADAPTER CORRECTNESS TEST
+# STYLE ADAPTER QUALITY EVALUATION
 #
 # Purpose:
-#   Same article -> 5 different styles
-#   Evaluate factual correctness of each rewrite
+#   Sample real articles per style from the training dataset,
+#   generate a rewrite for each with the trained adapter, and score:
+#
+#     1. Fact preservation vs the SOURCE article (numbers, names/
+#        places/dates, content similarity, length, output quality,
+#        style divergence -- unchanged from the original single-
+#        article correctness test).
+#     2. Style fidelity vs the human-written REFERENCE rewrite
+#        (ROUGE-1/2/L), since fact preservation alone can't tell a
+#        genuine style rewrite from a verbatim copy.
+#
+#   Produces a per-style + overall quality report with an overall
+#   accuracy percentage, printed to stdout and saved as JSON.
 #
 # IMPORTANT:
-#   This test is NOT measuring whether the rewrite is stylistically
-#   beautiful. It measures whether the original facts are preserved.
+#   "Correctness" here measures whether facts survived the rewrite,
+#   not whether the rewrite is stylistically beautiful.
 #
-#   5 outputs only:
+#   5 styles:
 #       1. Formal News
 #       2. Editorial
 #       3. Sports
@@ -26,7 +37,9 @@ import os
 import re
 import json
 import math
+import random
 import difflib
+import unicodedata
 from pathlib import Path
 from collections import Counter
 
@@ -64,6 +77,23 @@ ADAPTER_PATH = (
     "adapters/style_sinllama_v13"
 )
 
+# The dataset train_style.py's docstring/QC lineage traces back to --
+# the same rows (by content/style/rewritten_text) that survive its
+# QC filtering and dedup become style_dataset3_corrected_clean.jsonl,
+# the 6,605-row set actually trained on. This file is used directly
+# here (not the further-cleaned one) so the evaluation covers the
+# full labeled set. rewritten_text is the field train_style.py's
+# convert_record() treats as ground truth output, so it's also the
+# reference used for ROUGE below (NOT corrected_text -- that field
+# exists in this file but was never what the adapter was trained to
+# reproduce).
+DATASET_PATH = (
+    "/home/jovyan/style_rewriter/data/"
+    "style_dataset_corrected.jsonl"
+)
+
+REPORT_PATH = Path(ADAPTER_PATH) / "style_quality_report.json"
+
 # ================================================================
 # CONFIG
 # ================================================================
@@ -80,21 +110,22 @@ REPETITION_PENALTY = 1.05
 
 SEED = 42
 
-# ================================================================
-# THE ARTICLE TO TEST
-# ================================================================
+# Articles evaluated per style; 5 styles -> SAMPLE_SIZE_PER_STYLE * 5
+# total generations. Runtime scales linearly with this -- lower it
+# (e.g. 3) for a quick smoke test, raise it for a more statistically
+# stable report.
+SAMPLE_SIZE_PER_STYLE = 15
 
-ARTICLE = """
-ශ්‍රී ලංකාවේ විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් කිහිපයක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.
-""".strip()
+# Mirrors train_style.py's minimum output length QC.
+MIN_OUTPUT_CHARS = 50
+
+# Overall score at/above which a generation counts as a "pass".
+PASS_THRESHOLD = 70.0
 
 
 # ================================================================
-# STYLE RULES
+# THE STYLE THE ADAPTER TARGETS
 #
-# These must match the rules used by your trained adapter.
-# ================================================================
-
 # NOTE:
 # These must byte-for-byte match STYLE_RULES in train_style.py --
 # the adapter was fine-tuned on this exact English instruction text
@@ -105,6 +136,7 @@ ARTICLE = """
 # verbatim copy of the input (0% style divergence, see
 # score_style_divergence()) while still scoring "100% correctness"
 # because a copy trivially preserves every fact.
+# ================================================================
 
 STYLE_RULES = {
 
@@ -174,6 +206,14 @@ Rewrite the article in a Sinhala feature-writing style.
 """
 }
 
+STYLE_NAMES = {
+    "style_1_formal_news": "FORMAL NEWS",
+    "style_2_editorial": "EDITORIAL",
+    "style_3_sports": "SPORTS",
+    "style_4_youth": "YOUTH",
+    "style_5_feature": "FEATURE",
+}
+
 
 # ================================================================
 # COMMON INSTRUCTION
@@ -209,8 +249,6 @@ COMMON_RULES = (
 # ================================================================
 
 def set_seed(seed=42):
-
-    import random
 
     random.seed(seed)
 
@@ -345,6 +383,84 @@ def load_model(tokenizer):
 
 
 # ================================================================
+# LOAD EVALUATION DATASET
+# ================================================================
+
+def load_style_samples():
+    """Groups dataset rows by style, applies the same minimal QC as
+    train_style.py's convert_record() (non-empty content/rewritten_text,
+    output length >= 50 chars), dedupes identical (style, content) rows,
+    then samples SAMPLE_SIZE_PER_STYLE rows per style for evaluation.
+
+    NOTE: train_style.py's article-level train/val split is randomized
+    at training time and never persisted, so there is no held-out set
+    to evaluate against here. Scores below measure fact-preservation
+    and style-fidelity against the human reference on labeled data,
+    not generalization to unseen articles.
+    """
+
+    by_style = {style_id: [] for style_id in STYLE_RULES}
+    seen = set()
+
+    with open(DATASET_PATH, "r", encoding="utf-8") as f:
+
+        for line_number, line in enumerate(f, 1):
+
+            line = line.strip()
+
+            if not line:
+                continue
+
+            try:
+                rec = json.loads(line)
+
+            except json.JSONDecodeError as e:
+
+                print(f"⚠️ Invalid JSON at line {line_number}: {e}")
+                continue
+
+            style_id = rec.get("style")
+
+            if style_id not in STYLE_RULES:
+                continue
+
+            content = str(rec.get("content") or "").strip()
+            reference = str(rec.get("rewritten_text") or "").strip()
+
+            if not content or not reference:
+                continue
+
+            if len(reference) < MIN_OUTPUT_CHARS:
+                continue
+
+            key = (style_id, content)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            by_style[style_id].append({
+                "content": content,
+                "reference": reference,
+                "url": rec.get("url"),
+                "category": rec.get("category"),
+            })
+
+    rng = random.Random(SEED)
+
+    samples = {}
+
+    for style_id, rows in by_style.items():
+
+        rng.shuffle(rows)
+
+        samples[style_id] = rows[:SAMPLE_SIZE_PER_STYLE]
+
+    return samples
+
+
+# ================================================================
 # FORMAT PROMPT
 # ================================================================
 
@@ -401,10 +517,6 @@ def generate_rewrite(
 
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
-
-    print(
-        f"   Input tokens: {input_ids.shape[-1]}"
-    )
 
     output_ids = model.generate(
 
@@ -468,10 +580,10 @@ def generate_rewrite(
 
 def normalize_text(text):
 
-    text = text.replace("\u200b", "")
-    text = text.replace("\u200c", "")
-    text = text.replace("\u200d", "")
-    text = text.replace("\ufeff", "")
+    text = text.replace("​", "")
+    text = text.replace("‌", "")
+    text = text.replace("‍", "")
+    text = text.replace("﻿", "")
 
     text = re.sub(
         r"\s+",
@@ -513,38 +625,6 @@ def extract_numbers(text):
 
 
 # ================================================================
-# EXTRACT DATES
-# ================================================================
-
-def extract_dates(text):
-
-    text = normalize_text(text)
-
-    dates = []
-
-    # 2026 මැයි 16
-    patterns = [
-
-        r"\d{4}\s+[^\s]+\s+\d{1,2}",
-
-        r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}",
-
-        r"\d{4}[/-]\d{1,2}[/-]\d{1,2}",
-    ]
-
-    for pattern in patterns:
-
-        dates.extend(
-            re.findall(
-                pattern,
-                text,
-            )
-        )
-
-    return dates
-
-
-# ================================================================
 # EXTRACT IMPORTANT FACTUAL PHRASES
 #
 # This article is Sinhala, therefore word-level exact matching
@@ -556,7 +636,7 @@ def tokenize_sinhala(text):
     text = normalize_text(text)
 
     return re.findall(
-        r"[\u0D80-\u0DFF]+|[A-Za-z]+|\d+(?:[.,]\d+)?",
+        r"[඀-෿]+|[A-Za-z]+|\d+(?:[.,]\d+)?",
         text,
     )
 
@@ -1010,6 +1090,104 @@ def score_quality(rewritten):
 
 
 # ================================================================
+# REFERENCE ROUGE (grapheme-cluster, Sinhala-safe)
+#
+# IMPORTANT:
+# The `rouge_score` pip library breaks on Sinhala Unicode (see
+# test_grammar.py / CLAUDE.md). ROUGE here is computed natively on
+# Unicode grapheme clusters (base char + combining diacritics grouped
+# as one token) instead of relying on that library, mirroring
+# test_grammar.py's rouge_scores() exactly.
+#
+# This measures style-fidelity against the human-written reference
+# rewrite -- something the fact-preservation metrics above cannot,
+# since a verbatim copy of the input trivially maxes those out.
+# ================================================================
+
+def grapheme_tokenize(text):
+
+    tokens = []
+    chars = list(text)
+    i = 0
+
+    while i < len(chars):
+
+        cluster = chars[i]
+        i += 1
+
+        while (
+            i < len(chars)
+            and unicodedata.combining(chars[i])
+        ):
+            cluster += chars[i]
+            i += 1
+
+        if cluster.strip():
+            tokens.append(cluster)
+
+    return tokens
+
+
+def reference_rouge_scores(hypothesis, reference):
+
+    def ngrams(tokens, n):
+        return Counter(
+            tuple(tokens[i:i+n])
+            for i in range(len(tokens) - n + 1)
+        )
+
+    def lcs_length(a, b):
+
+        m, n = len(a), len(b)
+
+        prev = [0] * (n + 1)
+        curr = [0] * (n + 1)
+
+        for i in range(1, m + 1):
+
+            for j in range(1, n + 1):
+
+                if a[i-1] == b[j-1]:
+                    curr[j] = prev[j-1] + 1
+                else:
+                    curr[j] = max(prev[j], curr[j-1])
+
+            prev, curr = curr, [0] * (n + 1)
+
+        return prev[n]
+
+    hyp_toks = grapheme_tokenize(hypothesis)
+    ref_toks = grapheme_tokenize(reference)
+
+    if not hyp_toks or not ref_toks:
+        return {"rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0}
+
+    # ROUGE-1
+    h1 = ngrams(hyp_toks, 1)
+    r1 = ngrams(ref_toks, 1)
+    c1 = sum((h1 & r1).values())
+    prec1 = c1 / len(hyp_toks)
+    rec1 = c1 / len(ref_toks)
+    f1_1 = 2*prec1*rec1/(prec1+rec1) if (prec1+rec1) else 0.0
+
+    # ROUGE-2
+    h2 = ngrams(hyp_toks, 2)
+    r2 = ngrams(ref_toks, 2)
+    c2 = sum((h2 & r2).values())
+    prec2 = c2 / max(len(hyp_toks)-1, 1)
+    rec2 = c2 / max(len(ref_toks)-1, 1)
+    f1_2 = 2*prec2*rec2/(prec2+rec2) if (prec2+rec2) else 0.0
+
+    # ROUGE-L (LCS)
+    lcs = lcs_length(hyp_toks, ref_toks)
+    precL = lcs / len(hyp_toks)
+    recL = lcs / len(ref_toks)
+    f1_L = 2*precL*recL/(precL+recL) if (precL+recL) else 0.0
+
+    return {"rouge1": f1_1, "rouge2": f1_2, "rougeL": f1_L}
+
+
+# ================================================================
 # OVERALL CORRECTNESS
 #
 # WEIGHTING:
@@ -1022,6 +1200,9 @@ def score_quality(rewritten):
 #
 # This is deliberately NOT BLEU.
 # BLEU would unfairly punish legitimate style rewriting.
+# It measures FACT PRESERVATION vs the source article -- ROUGE
+# against the human reference (computed separately, see
+# reference_rouge_scores()) is what measures style fidelity.
 # ================================================================
 
 def calculate_correctness(
@@ -1161,110 +1342,43 @@ def calculate_correctness(
     }
 
 
+ZERO_SCORE = {
+    "overall": 0.0,
+    "numbers": 0.0,
+    "facts": 0.0,
+    "content_similarity": 0.0,
+    "length": 0.0,
+    "quality": 0.0,
+    "missing_numbers": [],
+    "extra_numbers": [],
+    "missing_facts": [],
+    "style_divergence": 0.0,
+    "is_verbatim_copy": False,
+}
+
+ZERO_ROUGE = {"rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0}
+
+
 # ================================================================
-# PRINT SCORE
+# STATUS BUCKET
 # ================================================================
 
-def print_score(
-    style_id,
-    result,
-):
+def status_for_score(score):
 
-    print("\n" + "-" * 80)
+    if score >= 90:
+        return "🟢 EXCELLENT"
 
-    print(
-        f"📊 CORRECTNESS: "
-        f"{style_id}"
-    )
+    elif score >= 80:
+        return "🟢 GOOD"
 
-    print(
-        f"   ⭐ Overall correctness : "
-        f"{result['overall']:.2f}%"
-    )
+    elif score >= 70:
+        return "🟡 ACCEPTABLE"
 
-    print(
-        f"   Numbers preserved      : "
-        f"{result['numbers']:.2f}%"
-    )
+    elif score >= 60:
+        return "🟠 NEEDS IMPROVEMENT"
 
-    print(
-        f"   Important facts        : "
-        f"{result['facts']:.2f}%"
-    )
-
-    print(
-        f"   Content similarity     : "
-        f"{result['content_similarity']:.2f}%"
-    )
-
-    print(
-        f"   Length preservation    : "
-        f"{result['length']:.2f}%"
-    )
-
-    print(
-        f"   Output quality         : "
-        f"{result['quality']:.2f}%"
-    )
-
-    print(
-        f"   Style divergence        : "
-        f"{result['style_divergence']:.2f}%"
-    )
-
-    if result["is_verbatim_copy"]:
-
-        print(
-            "\n   🚨 VERBATIM COPY: output is character-identical "
-            "to the input. No style rewrite occurred -- the "
-            "correctness score above is meaningless for this style."
-        )
-
-    if result["missing_numbers"]:
-
-        print(
-            "\n   ⚠️ Missing numbers:"
-        )
-
-        print(
-            "   ",
-            ", ".join(
-                result[
-                    "missing_numbers"
-                ]
-            )
-        )
-
-    if result["extra_numbers"]:
-
-        print(
-            "\n   ⚠️ Extra numbers:"
-        )
-
-        print(
-            "   ",
-            ", ".join(
-                result[
-                    "extra_numbers"
-                ]
-            )
-        )
-
-    if result["missing_facts"]:
-
-        print(
-            "\n   ⚠️ Some important "
-            "source words/facts not detected:"
-        )
-
-        print(
-            "   ",
-            ", ".join(
-                result[
-                    "missing_facts"
-                ][:30]
-            )
-        )
+    else:
+        return "🔴 POOR"
 
 
 # ================================================================
@@ -1282,7 +1396,7 @@ def main():
 
     print(
         "  SinhalaJournal-LLM | "
-        "5-STYLE CORRECTNESS TEST"
+        "STYLE ADAPTER QUALITY EVALUATION"
     )
 
     print(
@@ -1290,43 +1404,25 @@ def main():
     )
 
     print(
-        "\nSame article will be rewritten "
-        "into exactly 5 styles."
+        f"\nSampling up to {SAMPLE_SIZE_PER_STYLE} articles per style "
+        f"from the labeled dataset and scoring each rewrite."
     )
 
     print(
-        "\nCorrectness measures FACT "
-        "preservation, not style similarity."
+        "\nFact-preservation metrics are measured against the SOURCE "
+        "article; ROUGE is measured against the human-written "
+        "reference rewrite."
     )
 
     print(
         "\nGeneration:"
     )
 
-    print(
-        f"  Temperature       : "
-        f"{TEMPERATURE}"
-    )
-
-    print(
-        f"  Top-P             : "
-        f"{TOP_P}"
-    )
-
-    print(
-        f"  Top-K             : "
-        f"{TOP_K}"
-    )
-
-    print(
-        f"  Repetition        : "
-        f"{REPETITION_PENALTY}"
-    )
-
-    print(
-        f"  Max new tokens    : "
-        f"{GEN_MAX_NEW_TOKENS}"
-    )
+    print(f"  Temperature       : {TEMPERATURE}")
+    print(f"  Top-P             : {TOP_P}")
+    print(f"  Top-K             : {TOP_K}")
+    print(f"  Repetition        : {REPETITION_PENALTY}")
+    print(f"  Max new tokens    : {GEN_MAX_NEW_TOKENS}")
 
     # ------------------------------------------------------------
     # PATH CHECK
@@ -1339,24 +1435,26 @@ def main():
     if not Path(BASE_MODEL).exists():
 
         raise FileNotFoundError(
-            f"Base model not found:\n"
-            f"{BASE_MODEL}"
+            f"Base model not found:\n{BASE_MODEL}"
         )
 
-    print(
-        "   ✅ Base model found"
-    )
+    print("   ✅ Base model found")
 
     if not Path(ADAPTER_PATH).exists():
 
         raise FileNotFoundError(
-            f"Adapter not found:\n"
-            f"{ADAPTER_PATH}"
+            f"Adapter not found:\n{ADAPTER_PATH}"
         )
 
-    print(
-        "   ✅ Adapter found"
-    )
+    print("   ✅ Adapter found")
+
+    if not Path(DATASET_PATH).exists():
+
+        raise FileNotFoundError(
+            f"Dataset not found:\n{DATASET_PATH}"
+        )
+
+    print("   ✅ Dataset found")
 
     # ------------------------------------------------------------
     # LOAD
@@ -1367,292 +1465,312 @@ def main():
     model = load_model(tokenizer)
 
     # ------------------------------------------------------------
-    # PRINT ORIGINAL
+    # SAMPLE DATASET
     # ------------------------------------------------------------
 
     print(
-        "\n" +
-        "=" * 80
+        "\n📂 Sampling dataset:"
     )
 
-    print(
-        "📰 ORIGINAL ARTICLE"
+    print(f"   {DATASET_PATH}")
+
+    dataset_samples = load_style_samples()
+
+    for style_id in STYLE_RULES:
+
+        print(
+            f"   {style_id:<28} "
+            f"{len(dataset_samples[style_id]):>5,} sampled"
+        )
+
+    total_generations = sum(
+        len(rows) for rows in dataset_samples.values()
     )
 
-    print(
-        "=" * 80
-    )
-
-    print(
-        ARTICLE
-    )
+    print(f"\n   Total generations: {total_generations:,}")
 
     # ------------------------------------------------------------
-    # TEST ALL 5 STYLES
+    # EVALUATE EACH STYLE
     # ------------------------------------------------------------
 
-    results = {}
+    style_records = {style_id: [] for style_id in STYLE_RULES}
+    all_records = []
 
-    style_names = {
+    for style_id in STYLE_RULES:
 
-        "style_1_formal_news":
-            "FORMAL NEWS",
-
-        "style_2_editorial":
-            "EDITORIAL",
-
-        "style_3_sports":
-            "SPORTS",
-
-        "style_4_youth":
-            "YOUTH",
-
-        "style_5_feature":
-            "FEATURE",
-    }
-
-    for index, style_id in enumerate(
-        STYLE_RULES.keys(),
-        start=1,
-    ):
-
-        style_name = style_names[
-            style_id
-        ]
+        style_name = STYLE_NAMES[style_id]
+        rows = dataset_samples[style_id]
 
         print(
-            "\n\n" +
-            "=" * 80
+            "\n\n" + "=" * 80
         )
 
-        print(
-            f"  {index}/5  "
-            f"{style_name}"
-        )
+        print(f"  {style_name}  ({len(rows)} articles)")
+        print("=" * 80)
 
-        print(
-            "=" * 80
-        )
+        for idx, row in enumerate(rows, start=1):
 
-        print(
-            "\n🔄 Generating rewrite..."
-        )
+            article = row["content"]
+            reference = row["reference"]
 
-        try:
+            try:
 
-            rewritten = generate_rewrite(
-                model,
-                tokenizer,
-                style_id,
-                ARTICLE,
-            )
+                rewritten = generate_rewrite(
+                    model,
+                    tokenizer,
+                    style_id,
+                    article,
+                )
 
-        except Exception as e:
+            except Exception as e:
 
-            print(
-                "\n❌ Generation failed:"
-            )
+                print(
+                    f"\n❌ [{idx}/{len(rows)}] Generation failed: "
+                    f"{type(e).__name__}: {e}"
+                )
 
-            print(
-                type(e).__name__,
-                str(e),
-            )
+                rewritten = ""
 
-            rewritten = ""
+            if not rewritten:
 
-        if not rewritten:
+                score = dict(ZERO_SCORE)
+                rouge = dict(ZERO_ROUGE)
 
-            print(
-                "\n❌ EMPTY OUTPUT"
-            )
+            else:
 
-            result = {
-                "overall": 0.0,
-                "numbers": 0.0,
-                "facts": 0.0,
-                "content_similarity": 0.0,
-                "length": 0.0,
-                "quality": 0.0,
-                "missing_numbers": [],
-                "extra_numbers": [],
-                "missing_facts": [],
-                "style_divergence": 0.0,
-                "is_verbatim_copy": False,
+                score = calculate_correctness(
+                    article,
+                    rewritten,
+                )
+
+                rouge = reference_rouge_scores(
+                    rewritten,
+                    reference,
+                )
+
+            record = {
+                "style": style_id,
+                "url": row["url"],
+                "category": row["category"],
+                "rewritten": rewritten,
+                "reference": reference,
+                "score": score,
+                "rouge": {
+                    k: round(v, 4) for k, v in rouge.items()
+                },
             }
 
+            style_records[style_id].append(record)
+            all_records.append(record)
+
+            flag = ""
+
+            if not rewritten:
+                flag = "  ❌ EMPTY"
+            elif score["is_verbatim_copy"]:
+                flag = "  🚨 VERBATIM COPY"
+
+            print(
+                f"   [{idx:>2}/{len(rows)}] "
+                f"overall={score['overall']:>6.1f}%  "
+                f"rougeL={rouge['rougeL']:.3f}  "
+                f"divergence={score['style_divergence']:>5.1f}%"
+                f"{flag}"
+            )
+
+            # Show the full first generation of each style so it can
+            # be spot-checked by eye, not just by the numbers above.
+            if idx == 1 and rewritten:
+
+                print("\n   --- sample rewrite ---")
+                print(f"   Source : {article[:200]}...")
+                print(f"   Output : {rewritten[:400]}"
+                      f"{'...' if len(rewritten) > 400 else ''}")
+                print(f"   Ref    : {reference[:400]}"
+                      f"{'...' if len(reference) > 400 else ''}")
+                print("   ----------------------\n")
+
+    # ============================================================
+    # AGGREGATE PER STYLE
+    # ============================================================
+
+    def avg(records, path_a, path_b=None):
+
+        if not records:
+            return 0.0
+
+        if path_b is None:
+            values = [r[path_a] for r in records]
         else:
+            values = [r[path_a][path_b] for r in records]
 
-            # ----------------------------------------------------
-            # OUTPUT
-            # ----------------------------------------------------
+        return sum(values) / len(values)
 
-            print(
-                "\n📝 REWRITTEN ARTICLE:"
-            )
+    style_summary = {}
 
-            print(
-                "-" * 80
-            )
+    for style_id, records in style_records.items():
 
-            print(
-                rewritten
-            )
+        n = len(records)
 
-            # ----------------------------------------------------
-            # SCORE
-            # ----------------------------------------------------
+        if n == 0:
+            style_summary[style_id] = None
+            continue
 
-            result = calculate_correctness(
-                ARTICLE,
-                rewritten,
-            )
+        pass_count = sum(
+            1 for r in records
+            if r["score"]["overall"] >= PASS_THRESHOLD
+        )
 
-        results[style_id] = {
-            "style": style_name,
-            "rewritten": rewritten,
-            "score": result,
+        verbatim_count = sum(
+            1 for r in records
+            if r["score"]["is_verbatim_copy"]
+        )
+
+        style_summary[style_id] = {
+            "n": n,
+            "overall": round(avg(records, "score", "overall"), 2),
+            "numbers": round(avg(records, "score", "numbers"), 2),
+            "facts": round(avg(records, "score", "facts"), 2),
+            "content_similarity": round(
+                avg(records, "score", "content_similarity"), 2
+            ),
+            "length": round(avg(records, "score", "length"), 2),
+            "quality": round(avg(records, "score", "quality"), 2),
+            "style_divergence": round(
+                avg(records, "score", "style_divergence"), 2
+            ),
+            "rouge1": round(avg(records, "rouge", "rouge1"), 4),
+            "rouge2": round(avg(records, "rouge", "rouge2"), 4),
+            "rougeL": round(avg(records, "rouge", "rougeL"), 4),
+            "pass_rate": round(pass_count / n * 100, 2),
+            "verbatim_rate": round(verbatim_count / n * 100, 2),
         }
 
-        print_score(
-            style_name,
-            result,
-        )
-
     # ============================================================
-    # FINAL SUMMARY
+    # AGGREGATE OVERALL
     # ============================================================
 
-    print(
-        "\n\n" +
-        "=" * 80
+    n_total = len(all_records)
+
+    overall_accuracy = (
+        avg(all_records, "score", "overall") if n_total else 0.0
     )
 
-    print(
-        "  FINAL CORRECTNESS SUMMARY"
+    overall_pass_count = sum(
+        1 for r in all_records
+        if r["score"]["overall"] >= PASS_THRESHOLD
     )
 
-    print(
-        "=" * 80
+    overall_verbatim_count = sum(
+        1 for r in all_records
+        if r["score"]["is_verbatim_copy"]
     )
 
-    print(
-        "\n"
-    )
+    overall_rouge1 = avg(all_records, "rouge", "rouge1") if n_total else 0.0
+    overall_rougeL = avg(all_records, "rouge", "rougeL") if n_total else 0.0
+
+    # ============================================================
+    # PRINT QUALITY REPORT
+    # ============================================================
 
     print(
-        f"{'STYLE':<20}"
-        f"{'CORRECTNESS':>15}"
-        f"{'DIVERGENCE':>15}"
-        f"{'COPY?':>10}"
+        "\n\n" + "=" * 96
     )
+
+    print("  QUALITY REPORT")
+    print("=" * 96)
 
     print(
-        "-" * 63
+        f"\n  {'STYLE':<20}{'N':>4}{'ACCURACY':>11}"
+        f"{'ROUGE-L':>10}{'DIVERGENCE':>13}"
+        f"{'PASS%':>9}{'VERBATIM%':>11}"
     )
 
-    valid_scores = []
-    verbatim_copies = 0
+    print("  " + "-" * 92)
 
-    for style_id, data in results.items():
+    for style_id in STYLE_RULES:
 
-        score = data["score"][
-            "overall"
-        ]
+        s = style_summary[style_id]
 
-        divergence = data["score"][
-            "style_divergence"
-        ]
+        if s is None:
 
-        is_copy = data["score"][
-            "is_verbatim_copy"
-        ]
+            print(
+                f"  {STYLE_NAMES[style_id]:<20}"
+                f"{'--- no samples available ---':>60}"
+            )
 
-        if is_copy:
-            verbatim_copies += 1
+            continue
 
         print(
-            f"{data['style']:<20}"
-            f"{score:>14.2f}%"
-            f"{divergence:>14.2f}%"
-            f"{'YES' if is_copy else 'no':>10}"
+            f"  {STYLE_NAMES[style_id]:<20}"
+            f"{s['n']:>4}"
+            f"{s['overall']:>10.2f}%"
+            f"{s['rougeL']:>10.3f}"
+            f"{s['style_divergence']:>12.2f}%"
+            f"{s['pass_rate']:>8.1f}%"
+            f"{s['verbatim_rate']:>10.1f}%"
         )
 
-        valid_scores.append(score)
+    print("  " + "-" * 92)
 
     print(
-        "-" * 63
-    )
-
-    average = (
-        sum(valid_scores) /
-        len(valid_scores)
-        if valid_scores
-        else 0
+        f"  {'OVERALL':<20}"
+        f"{n_total:>4}"
+        f"{overall_accuracy:>10.2f}%"
+        f"{overall_rougeL:>10.3f}"
+        f"{avg(all_records, 'score', 'style_divergence'):>12.2f}%"
+        f"{(overall_pass_count / n_total * 100 if n_total else 0):>8.1f}%"
+        f"{(overall_verbatim_count / n_total * 100 if n_total else 0):>10.1f}%"
     )
 
     print(
-        f"{'AVERAGE':<20}"
-        f"{average:>14.2f}%"
+        "\n" + "=" * 96
     )
 
-    if verbatim_copies:
+    print(f"\n  ⭐ OVERALL ACCURACY : {overall_accuracy:.2f}%")
+
+    print(
+        f"     Pass rate (>= {PASS_THRESHOLD:.0f}%) : "
+        f"{overall_pass_count}/{n_total} "
+        f"({(overall_pass_count / n_total * 100 if n_total else 0):.2f}%)"
+    )
+
+    print(
+        f"     ROUGE-1 vs reference : {overall_rouge1:.4f}"
+    )
+
+    print(
+        f"     ROUGE-L vs reference : {overall_rougeL:.4f}"
+    )
+
+    if overall_verbatim_count:
 
         print(
-            f"\n🚨 {verbatim_copies}/{len(results)} styles produced "
-            f"a VERBATIM COPY of the input (0% style divergence). "
-            f"The correctness average above is inflated by these -- "
-            f"a copy trivially preserves every fact. Treat this "
-            f"adapter as NOT rewriting style until divergence > 0 "
-            f"is confirmed on real generations."
+            f"\n  🚨 {overall_verbatim_count}/{n_total} generations were "
+            f"VERBATIM COPIES of the input (0% style divergence). "
+            f"The accuracy figure above is inflated by these -- a "
+            f"copy trivially preserves every fact. Treat any style "
+            f"with a non-zero verbatim rate as NOT reliably rewriting "
+            f"style."
         )
 
-    # ------------------------------------------------------------
-    # PASS / WARNING
-    # ------------------------------------------------------------
+    print("\n  Per-style status:")
 
-    print(
-        "\n"
-    )
+    for style_id in STYLE_RULES:
 
-    for style_id, data in results.items():
+        s = style_summary[style_id]
 
-        score = data["score"][
-            "overall"
-        ]
-
-        if score >= 90:
-
-            status = "🟢 EXCELLENT"
-
-        elif score >= 80:
-
-            status = "🟢 GOOD"
-
-        elif score >= 70:
-
-            status = "🟡 ACCEPTABLE"
-
-        elif score >= 60:
-
-            status = "🟠 NEEDS IMPROVEMENT"
-
-        else:
-
-            status = "🔴 POOR"
+        if s is None:
+            continue
 
         print(
-            f"{data['style']:<20}"
-            f"{status}"
+            f"    {STYLE_NAMES[style_id]:<20}"
+            f"{status_for_score(s['overall'])}"
         )
 
     # ============================================================
     # SAVE JSON REPORT
     # ============================================================
-
-    report_path = (
-        Path(ADAPTER_PATH)
-        / "style_correctness_test.json"
-    )
 
     report = {
 
@@ -1660,37 +1778,51 @@ def main():
 
         "adapter": ADAPTER_PATH,
 
-        "article": ARTICLE,
+        "dataset": DATASET_PATH,
+
+        "sample_size_per_style": SAMPLE_SIZE_PER_STYLE,
+
+        "pass_threshold": PASS_THRESHOLD,
 
         "generation": {
 
-            "temperature":
-                TEMPERATURE,
+            "temperature": TEMPERATURE,
 
-            "top_p":
-                TOP_P,
+            "top_p": TOP_P,
 
-            "top_k":
-                TOP_K,
+            "top_k": TOP_K,
 
-            "repetition_penalty":
-                REPETITION_PENALTY,
+            "repetition_penalty": REPETITION_PENALTY,
 
-            "max_new_tokens":
-                GEN_MAX_NEW_TOKENS,
+            "max_new_tokens": GEN_MAX_NEW_TOKENS,
         },
 
-        "results": results,
+        "style_summary": style_summary,
 
-        "average_correctness":
-            round(
-                average,
-                2,
+        "overall": {
+
+            "n": n_total,
+
+            "accuracy": round(overall_accuracy, 2),
+
+            "pass_count": overall_pass_count,
+
+            "pass_rate": round(
+                overall_pass_count / n_total * 100 if n_total else 0.0, 2
             ),
+
+            "verbatim_copies": overall_verbatim_count,
+
+            "rouge1": round(overall_rouge1, 4),
+
+            "rougeL": round(overall_rougeL, 4),
+        },
+
+        "samples": all_records,
     }
 
     with open(
-        report_path,
+        REPORT_PATH,
         "w",
         encoding="utf-8",
     ) as f:
@@ -1702,17 +1834,10 @@ def main():
             indent=2,
         )
 
-    print(
-        "\n💾 Report saved:"
-    )
+    print("\n💾 Report saved:")
+    print(f"   {REPORT_PATH}")
 
-    print(
-        f"   {report_path}"
-    )
-
-    print(
-        "\n✅ 5-style test completed."
-    )
+    print("\n✅ Style quality evaluation completed.")
 
 
 # ================================================================
