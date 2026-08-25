@@ -22,7 +22,10 @@ INSTRUCTION = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-model", default="models/SinLLaMA-merged-base")
-    parser.add_argument("--adapter", required=True)
+    parser.add_argument(
+        "--adapter", default=None,
+        help="LoRA adapter dir. Omit to run the bare base model (no adapter attached).",
+    )
     parser.add_argument("--input-data", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--max-seq-length", type=int, default=1024)
@@ -137,7 +140,7 @@ def main() -> None:
     input_path = Path(args.input_data)
     output_path = Path(args.output)
     base_path = Path(args.base_model)
-    adapter_path = Path(args.adapter)
+    adapter_path = Path(args.adapter) if args.adapter else None
     rows = load_inputs(input_path, args.limit)
 
     if install_tokenizer_compatibility_alias(base_path):
@@ -159,8 +162,11 @@ def main() -> None:
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-    print(f"Loading adapter: {adapter_path}")
-    model = PeftModel.from_pretrained(model, adapter_path, local_files_only=True)
+    if adapter_path is not None:
+        print(f"Loading adapter: {adapter_path}")
+        model = PeftModel.from_pretrained(model, adapter_path, local_files_only=True)
+    else:
+        print("No adapter given — running the bare base model.")
     FastLanguageModel.for_inference(model)
     model.eval()
 
@@ -213,7 +219,7 @@ def main() -> None:
     manifest = {
         "system": "SinLLaMA grammar adapter",
         "base_model": str(base_path.resolve()),
-        "adapter": str(adapter_path.resolve()),
+        "adapter": str(adapter_path.resolve()) if adapter_path is not None else None,
         "input_path": str(input_path.resolve()),
         "input_sha256": file_sha256(input_path),
         "output_path": str(output_path.resolve()),

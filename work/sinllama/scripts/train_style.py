@@ -43,13 +43,15 @@ SINLLAMA_BASE = (
 
 # NEW ADAPTER
 OUTPUT_ADAPTER = (
-    "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v12"
+    "/home/jovyan/work/sinllama/models/adapters/style_sinllama_v13"
 )
 
-# 7,555-row cleaned dataset
+# 6,605-row cleaned dataset (style_dataset3_corrected.jsonl with
+# forced open/close templates stripped and garbled-Sinhala rows
+# dropped - see clean_style_dataset.py)
 TRAIN_DATA_PATH = (
     "/home/jovyan/style_rewriter/data/"
-    "style_dataset2_fixed.jsonl"
+    "style_dataset3_corrected_clean.jsonl"
 )
 
 
