@@ -81,12 +81,18 @@ def prompt_headline(text: str, length: str = None, **_) -> str:
 # can cost as much as three short words — "කොටස් වෙළෙඳපොළේ පසුබෑමක්" is 3 words
 # but 8 tokens.
 #
-# The ceiling is deliberately over-provisioned (~1.5x the observed p90):
-# generation already stops on EOS or a stop sequence the moment the model
-# finishes, so a budget that's too high costs nothing, while one that's too
-# low cuts a headline mid-word. The band is enforced by word count downstream,
-# never by this ceiling.
-TOKENS_PER_WORD_CEILING = 4.0
+# The ceiling is deliberately over-provisioned: generation already stops on
+# EOS or a stop sequence the moment the model finishes, so a budget that's
+# too high costs nothing, while one that's too low cuts a headline mid-word
+# -- observed directly on a dense, name-heavy article (many transliterated
+# foreign names, compounds like "රාජ්‍යතාන්ත්‍රික"): the 4.0x ceiling (52
+# tokens for the long band) got hit mid-token, producing a truncated
+# fragment ("තාන්ත්" instead of "තාන්ත්‍රික") that downstream fact-checking
+# correctly holds back as malformed -- but every candidate in the batch was
+# hitting the same ceiling, so nothing survived to return. Raised from the
+# original 12-example v17 calibration (1.5x its p90) to give unusual
+# compounds and transliterated names more headroom before the hard cut.
+TOKENS_PER_WORD_CEILING = 6.0
 
 # The floor is the opposite trade — min_new_tokens blocks EOS until it's
 # reached, so overshooting produces rambling that then has to be trimmed. Set
