@@ -250,8 +250,9 @@ using the same 45-output protocol as the tracked v06 evaluation reported
 below. That protocol resamples articles from the training corpus itself
 rather than a persisted, article-level held-out split, so neither the v06 nor
 the v07 result under it is a reliable basis for choosing between the two
-versions; Section VI-D and the Limitations discuss this and a leakage-controlled
-re-evaluation in progress.
+versions. A subsequent article-level frozen split and leakage-controlled
+retrain and re-evaluation of both recipes, reported in Section VI-D, found no
+measurable difference between them.
 
 \textit{Style rewriting.} The cleaned dataset contains 7,555 rewrites across
 formal news, editorial, sports, youth, and feature styles. A generation audit
@@ -271,9 +272,9 @@ BF16 compute, and each task uses a separate LoRA adapter. Fig.~\ref{fig:modelada
 summarizes the relationship. The summarizer node in Fig.~\ref{fig:modeladaptation}
 names v07 because the serving layer automatically deploys whichever
 version-numbered adapter folder is highest, independent of any quality
-comparison; this is a deployment fact, not evidence that v07 was selected on
-merit, and is separate from which version the results in Section VI-D treat
-as the tracked baseline.
+comparison. A leakage-controlled re-evaluation (Section VI-D) later found
+this deployment choice is not a quality regression: on a frozen,
+article-level held-out split, v07 performs indistinguishably from v06.
 
 \begin{figure}[!t]
 \centering
@@ -335,9 +336,9 @@ the selected configurations used in the reported development runs. Grammar
 v27 deliberately reduces rank from 32 to 4 as a capacity experiment. The
 result did not improve transfer to untaught correction pairs. For summarization, v06 is shown
 as the primary tracked configuration; v07 uses an identical configuration on
-the cleaned data and has also been trained and evaluated, but its evaluation
-shares the same small-sample, non-blind protocol as v06's and is not yet used
-to select between the two versions (Section VI-D).
+the cleaned data. Both were later retrained unchanged on an article-level
+frozen split and re-evaluated blind; the two configurations produced
+statistically indistinguishable results (Section VI-D).
 
 \begin{table*}[!t]
 \caption{Selected LoRA fine-tuning configurations used in the reported task experiments. All use seed 42, a 4-bit NF4 SinLlama base with BF16 compute, and the same seven target projections.}
@@ -405,14 +406,21 @@ publisher set provides a limited transfer check.
 
 Summarization uses ROUGE calculated on Sinhala graphemes as an internal
 diagnostic \cite{lin2004rouge}. The tracked v06 evaluation contains 15 articles
-generated at three lengths, for 45 outputs. Because this is a small evaluation
-without an independent article-level blind split, the main reported result is
-length control. We report target and observed compression, compliance with the
-requested length band, and whether generation ends cleanly. Teacher data audits
-and stored predictions are inspected separately for factual errors and errors
-involving numbers and units. The later v07
-cleaning recipe is described as data preparation only because no saved v07
-model result is available.
+generated at three lengths, for 45 outputs, resampled from the training corpus
+itself rather than a persisted held-out split; we report this only as a
+length-control diagnostic (target and observed compression, band compliance,
+clean sentence endings) and not as a blind quality estimate. A second,
+leakage-controlled protocol was built afterward: an article-level 80/10/10
+split of the full 35,569-article corpus, frozen once with a fixed seed, plus
+a fixed 300-article evaluation subset drawn from its held-out test partition
+(273 of which carry all three reference lengths). Both v06's and v07's
+training recipes were rerun unchanged on this split's train partition, then
+both resulting checkpoints were scored against the same 273-article subset
+under one shared metric set: grapheme ROUGE-1/2/L, length-band compliance,
+clean-ending rate, and the word-spacing-glue and numeric-unit-consistency
+checks used to audit teacher data. Teacher data audits and stored predictions
+from the original v06 evaluation are inspected separately for factual errors
+and errors involving numbers and units.
 
 Style rewriting combines overlap, cosine similarity, source divergence, length
 preservation, and target audits because high overlap can reward unchanged text.
@@ -692,22 +700,72 @@ above; on that protocol v07 scores a lower ROUGE-L in all three bands (e.g.
 v06. However, a contamination audit of both adapters' original training
 splits against a newly constructed, article-level held-out test set found
 that roughly 81\% of that held-out set was already present in each
-adapter's original training data — a direct consequence of splitting at the
+adapter's original training data (80.69\% for v06, 80.80\% for v07, out of
+3,558 held-out articles) — a direct consequence of splitting at the
 sample level (Section~\ref{sec:leak} describes an analogous leakage
-mechanism for headline data). Neither the v06 nor the v07 number above should
-therefore be read as a quality comparison; a leakage-controlled
-re-evaluation using the frozen split is planned but not yet complete. We
-report the cleaning itself as a dataset improvement and do not yet claim
-that it raises ROUGE or factual accuracy. An earlier standard no-repeat n-gram
+mechanism for headline data). Because the split happens after each article
+is exploded into up to three length-variant samples, an article is excluded
+from training only if all three of its variants fall in the same 15\%
+validation slice — with an 85/15 split this occurs for a 3-variant article
+with probability $0.15^3 \approx 0.3\%$, so the near-total contamination is
+the expected outcome of this split design, not an unusual failure. Neither
+the v06 nor the v07 number above should therefore be read as a quality
+comparison.
+
+A leakage-controlled re-evaluation was subsequently completed. Both
+adapters' original training recipes (identical hyperparameters; v06 on the
+raw 35,569-article corpus, v07 on the same corpus intersected with its
+22-row cleaning filter) were rerun unchanged on the frozen split's train
+partition, and both resulting checkpoints were scored against the same
+273-article frozen evaluation subset, in the same order, under one shared
+metric set. Table~\ref{tab:summaryfrozen} reports the result.
+
+\begin{table}[!t]
+\caption{Leakage-controlled v06 vs.\ v07 comparison, retrained on an
+article-level frozen split and scored on the same 273-article held-out
+subset (819 outputs per adapter)}
+\label{tab:summaryfrozen}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.6pt}
+\renewcommand{\arraystretch}{1.04}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Band} & \textbf{R-L (v06/v07)} & \textbf{R-1 (v06/v07)} & \textbf{In-band \% (v06/v07)} & \textbf{Clean-end \% (v06/v07)} \\
+\hline
+Short  & 0.508 / 0.508 & 0.727 / 0.729 & 93.4 / 94.1 & 98.5 / 98.9 \\
+\hline
+Medium & 0.458 / 0.456 & 0.756 / 0.749 & 92.7 / 90.5 & 95.2 / 95.2 \\
+\hline
+Long   & 0.457 / 0.458 & 0.781 / 0.781 & 86.8 / 88.6 & 94.9 / 94.1 \\
+\hline
+\end{tabular}
+\end{table}
+
+ROUGE-L differs by at most 0.002 on any band, and no version wins
+consistently on in-band rate or clean-ending rate. Numeric-unit-mismatch
+rate, checked with the same regex audit used on teacher data, is likewise
+near zero and statistically indistinguishable for both versions (0.0\% to
+0.7\% across bands, one or two affected articles out of 273); word-spacing
+glue is 0\% for both on every band. The original small-sample result
+therefore reflected the split leak rather than a real effect of the
+cleaning pass: once trained on identical, disjoint, leakage-free data,
+v06's raw-corpus recipe and v07's cleaned-corpus recipe are statistically
+tied on every metric measured. This also means the version currently live
+in production by version-sort accident (v07, Section IV-A) is not a
+measured quality regression relative to v06.
+
+An earlier standard no-repeat n-gram
 constraint also corrupted opening Sinhala grapheme sequences and was removed.
 This is an important Sinhala specific observation. A decoding constraint intended to
 reduce repetition can also damage Sinhala grapheme sequences.
 
-The evaluation remains small and limited to one source family. The three length
-variants are created before the 85/15 split, so variants of one article can
-cross partitions. The evaluator also samples from the silver corpus rather than
-a persisted blind set. The v06 results therefore demonstrate length control,
-not generalization to an independent publisher.
+The 45-output evaluation in Table~\ref{tab:summary} remains small and
+demonstrates length control specifically, not a blind quality estimate; the
+273-article frozen-split evaluation above addresses the article-level
+leakage that limited it, though both remain limited to one source family
+and to automatic metrics rather than human or LLM-judged factual
+assessment.
 
 A similar issue appeared across all four components. Grammar improved after
 target repair without increasing dataset size. Headline duplication inflated
@@ -731,14 +789,15 @@ still about 40\%. The 154 example grammar analyses are development experiments,
 not additional blind tests.
 
 Headline transfer was tested on one external publisher, and v20 still needs
-evaluation on the dirty inputs it was designed to clean. Summarization uses only
-15 articles and lacks an article-level blind split.
-% TODO(SUMMARIZATION_NEXT_STEPS.md): an article-level frozen train/val/test
-% split now exists, and a contamination audit found ~81% overlap between it
-% and both existing adapters' original training data. Replace this
-% limitation once the frozen-split retrain and re-evaluation (in progress)
-% produce a tracked result.
-Style has only a 75-output
+evaluation on the dirty inputs it was designed to clean. Summarization's
+original 15-article evaluation lacked an article-level blind split; the
+frozen-split re-evaluation (Section VI-D) resolves that specific limitation
+and found no measurable difference between the raw and cleaned data recipes,
+but still relies only on automatic overlap and regex-based metrics — no
+semantic-similarity, LLM-judge factuality, or human evaluation of the
+summarizer has been run, so the factual-error case reported for v06
+(Section VI-D) has not been independently re-checked at scale on either
+recipe. Style has only a 75-output
 development diagnostic sampled from the labeled dataset rather than a frozen
 independent benchmark, and its training and serving prompts are different.
 
@@ -760,7 +819,11 @@ the apparent ROUGE-1 score because duplicated articles entered validation. Style
 remove systematic template collapse; only 34.0\% of generated candidates
 passed the final quality filters, while stronger transformations remained more
 vulnerable to semantic drift. The summarizer controlled length well but still
-showed factual and number related errors. The
+showed factual and number related errors; a subsequent leakage-controlled
+re-evaluation found no measurable difference between its raw-corpus and
+cleaned-corpus training recipes, showing that the earlier version comparison
+had been measuring split contamination rather than a real effect of data
+cleaning. The
 main result across the four tasks is that data quality and evaluation design
 strongly affect measured performance. Increasing adapter capacity alone did
 not solve these problems.
