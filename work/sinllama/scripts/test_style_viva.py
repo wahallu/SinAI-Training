@@ -383,85 +383,7 @@ def load_model(tokenizer):
 
 
 # ================================================================
-# LOAD EVALUATION DATASET
-# ================================================================
-
-def load_style_samples():
-    """Groups dataset rows by style, applies the same minimal QC as
-    train_style.py's convert_record() (non-empty content/rewritten_text,
-    output length >= 50 chars), dedupes identical (style, content) rows,
-    then samples SAMPLE_SIZE_PER_STYLE rows per style for evaluation.
-
-    NOTE: train_style.py's article-level train/val split is randomized
-    at training time and never persisted, so there is no held-out set
-    to evaluate against here. Scores below measure fact-preservation
-    and style-fidelity against the human reference on labeled data,
-    not generalization to unseen articles.
-    """
-
-    by_style = {style_id: [] for style_id in STYLE_RULES}
-    seen = set()
-
-    with open(DATASET_PATH, "r", encoding="utf-8") as f:
-
-        for line_number, line in enumerate(f, 1):
-
-            line = line.strip()
-
-            if not line:
-                continue
-
-            try:
-                rec = json.loads(line)
-
-            except json.JSONDecodeError as e:
-
-                print(f"⚠️ Invalid JSON at line {line_number}: {e}")
-                continue
-
-            style_id = rec.get("style")
-
-            if style_id not in STYLE_RULES:
-                continue
-
-            content = str(rec.get("content") or "").strip()
-            reference = str(rec.get("rewritten_text") or "").strip()
-
-            if not content or not reference:
-                continue
-
-            if len(reference) < MIN_OUTPUT_CHARS:
-                continue
-
-            key = (style_id, content)
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-
-            by_style[style_id].append({
-                "content": content,
-                "reference": reference,
-                "url": rec.get("url"),
-                "category": rec.get("category"),
-            })
-
-    rng = random.Random(SEED)
-
-    samples = {}
-
-    for style_id, rows in by_style.items():
-
-        rng.shuffle(rows)
-
-        samples[style_id] = rows[:SAMPLE_SIZE_PER_STYLE]
-
-    return samples
-
-
-# ================================================================
-# FORMAT PROMPT
+# PROMPT BUILDER
 # ================================================================
 
 def build_prompt(style_id, article):
@@ -1342,507 +1264,459 @@ def calculate_correctness(
     }
 
 
-ZERO_SCORE = {
-    "overall": 0.0,
-    "numbers": 0.0,
-    "facts": 0.0,
-    "content_similarity": 0.0,
-    "length": 0.0,
-    "quality": 0.0,
-    "missing_numbers": [],
-    "extra_numbers": [],
-    "missing_facts": [],
-    "style_divergence": 0.0,
-    "is_verbatim_copy": False,
+# ================================================================
+# VIVA DEMONSTRATION MODE
+#
+# This version evaluates ONE fixed article supplied for the final viva.
+#
+# IMPORTANT:
+#   This is a demonstration / case-study evaluation, NOT a statistical
+#   benchmark. It is designed to let the panel see:
+#
+#     1. What changed stylistically?
+#     2. Were the important facts preserved?
+#     3. Did numbers/dates remain correct?
+#     4. Did the output actually change rather than copy the source?
+#     5. How similar is the output to a human reference, IF a reference
+#        is supplied?
+#
+# Automatic metrics are supporting evidence. Human evaluation is the
+# final evidence for style naturalness and overall usefulness.
+#
+# The fixed article below is the exact article supplied for the viva.
+# ================================================================
+
+VIVA_ARTICLE = """විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් ගණනාවක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති."""
+
+# Optional: if you have a human-written reference rewrite for THIS exact
+# article/style, paste it here. Leave empty when unavailable.
+HUMAN_REFERENCE = {
+    "style_1_formal_news": "",
+    "style_2_editorial": "",
+    "style_3_sports": "",
+    "style_4_youth": "",
+    "style_5_feature": "",
 }
 
-ZERO_ROUGE = {"rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0}
+# ---------------------------------------------------------------
+# Ground-truth fact checklist for this exact viva article.
+#
+# These are NOT invented model facts. They are facts explicitly present
+# in the user-supplied source article. Each output is checked against
+# these facts. This gives the panel a transparent "fact matrix".
+# ---------------------------------------------------------------
+VIVA_FACTS = [
+    ("Cause / context", "විදේශ විනිමය සංචිතවල පීඩනය", ["විදේශ විනිමය සංචිතවල පීඩනය"]),
+    ("Cause / context", "ආර්ථික ප්‍රතිසංස්කරණ", ["ආර්ථික ප්‍රතිසංස්කරණ"]),
+    ("Policy subject", "වාහන ආනයනය සම්බන්ධ බදු ප්‍රතිපත්ති වෙනස්කම්", ["වාහන ආනයනය"]),
+    ("Tax rate", "සියයට 50ක තාවකාලික අතිරේක බද්ද", ["සියයට 50", "50%", "50"]),
+    ("Effective date", "2026 මැයි 16", ["2026 මැයි 16", "2026", "මැයි 16"]),
+    ("Legal basis", "රේගු පනත", ["රේගු පනත"]),
+    ("Issuing authority", "ජනාධිපතිවරයා", ["ජනාධිපතිවරයා"]),
+    ("Covered vehicle", "මගී රථ", ["මගී රථ"]),
+    ("Covered vehicle", "ජීප් රථ", ["ජීප් රථ"]),
+    ("Covered vehicle", "බස් රථ", ["බස් රථ"]),
+    ("Covered vehicle", "භාණ්ඩ ප්‍රවාහන රථ", ["භාණ්ඩ ප්‍රවාහන රථ"]),
+    ("Covered vehicle", "ගිලන් රථ", ["ගිලන් රථ"]),
+    ("Covered vehicle", "විදුලි වාහන", ["විදුලි", "වාහන"]),
+    ("Covered vehicle", "දෙමුහුම් වාහන", ["දෙමුහුම්", "වාහන"]),
+    ("Excluded vehicle", "යතුරුපැදි", ["යතුරුපැදි"]),
+    ("Excluded vehicle", "ත්‍රී රෝද රථ", ["ත්‍රී රෝද රථ"]),
+    ("Excluded vehicle", "වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන", ["වාණිජ කටයුතු", "ආනයනික වාහන"]),
+    ("Duration", "කෙටි කාලීන පියවරක්", ["කෙටි කාලීන පියවරක්"]),
+    ("End condition", "ආර්ථිකය ස්ථාවර වන තෙක්", ["ආර්ථිකය", "ස්ථාවරත්වයකට"]),
+]
 
+# A smaller, especially important set for the headline "critical facts".
+CRITICAL_FACTS = [
+    ("50% tax", ["සියයට 50", "50%"]),
+    ("2026 May 16", ["2026 මැයි 16"]),
+    ("Customs Act", ["රේගු පනත"]),
+    ("President issued order", ["ජනාධිපතිවරයා"]),
+    ("Motorcycles excluded", ["යතුරුපැදි"]),
+    ("Three-wheelers excluded", ["ත්‍රී රෝද රථ"]),
+    ("Commercial-use imported vehicles excluded", ["වාණිජ කටයුතු", "ආනයනික වාහන"]),
+    ("Temporary measure", ["කෙටි කාලීන පියවරක්"]),
+]
+
+# ---------------------------------------------------------------
+# A panel-friendly style score.
+#
+# This is NOT "accuracy". It is an automatic diagnostic based on
+# observable style signals. Human raters must decide whether the
+# output genuinely fits the target style.
+# ---------------------------------------------------------------
+
+STYLE_SIGNALS = {
+    "style_1_formal_news": [
+        "වෙත", "බව", "පෙන්වා දෙති", "බලාත්මක", "ප්‍රකාශයට",
+        "අදාළ", "සම්බන්ධයෙන්",
+    ],
+    "style_2_editorial": [
+        "සැලකිය යුතුය", "සමස්තයක් ලෙස", "කෙසේ වෙතත්",
+        "වැදගත්", "ප්‍රතිපත්තිය", "පියවර",
+    ],
+    "style_3_sports": [
+        "තරග", "ජය", "පරාජය", "ක්‍රීඩා", "ක්‍රීඩක",
+        "කණ්ඩායම", "තරගයේ",
+    ],
+    "style_4_youth": [
+        "සරලව", "ඉතාමත්", "අපි", "දැනට", "මේ", "ඔබට",
+    ],
+    "style_5_feature": [
+        "පසුබිම", "කතාව", "සන්දර්භය", "විස්තර", "මානය",
+        "අර්ථය", "කෙසේ වෙතත්",
+    ],
+}
+
+STYLE_SIGNAL_LABELS = {
+    "style_1_formal_news": "formal-news signals",
+    "style_2_editorial": "editorial/analytical signals",
+    "style_3_sports": "sports signals (expected LOW for this non-sports article)",
+    "style_4_youth": "accessible/conversational signals",
+    "style_5_feature": "feature/narrative signals",
+}
+
+# ---------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------
+
+def contains_any(text, options):
+    return any(option in text for option in options)
+
+def viva_fact_matrix(source, output):
+    rows = []
+    for category, fact, variants in VIVA_FACTS:
+        source_has = contains_any(source, variants)
+        output_has = contains_any(output, variants)
+        rows.append({
+            "category": category,
+            "fact": fact,
+            "source": "YES" if source_has else "NO",
+            "output": "YES" if output_has else "NO",
+            "preserved": bool(source_has and output_has),
+        })
+    preserved = sum(r["preserved"] for r in rows)
+    total = len(rows)
+    return rows, (preserved / total * 100 if total else 0.0)
+
+def critical_fact_matrix(source, output):
+    rows = []
+    for fact, variants in CRITICAL_FACTS:
+        source_has = contains_any(source, variants)
+        output_has = contains_any(output, variants)
+        rows.append({
+            "fact": fact,
+            "source": source_has,
+            "output": output_has,
+            "preserved": source_has and output_has,
+        })
+    preserved = sum(r["preserved"] for r in rows)
+    total = len(rows)
+    return rows, (preserved / total * 100 if total else 0.0)
+
+def score_style_signals(style_id, output):
+    signals = STYLE_SIGNALS[style_id]
+    hits = [s for s in signals if s in output]
+    # Diagnostic only: presence of signals does not prove style.
+    score = min(100.0, len(hits) / max(len(signals), 1) * 100.0)
+    return round(score, 2), hits
+
+def exact_number_check(source, output):
+    source_numbers = Counter(extract_numbers(source))
+    output_numbers = Counter(extract_numbers(output))
+    matched = 0
+    total = sum(source_numbers.values())
+    for num, count in source_numbers.items():
+        matched += min(count, output_numbers.get(num, 0))
+    score = matched / total * 100 if total else 100.0
+    extras = []
+    for num, count in output_numbers.items():
+        extra = max(0, count - source_numbers.get(num, 0))
+        extras.extend([num] * extra)
+    return round(score, 2), extras
+
+def render_fact_matrix(rows):
+    print("\n  FACT PRESERVATION MATRIX")
+    print("  " + "-" * 86)
+    print(f"  {'CATEGORY':<22}{'FACT':<42}{'RESULT':>10}")
+    print("  " + "-" * 86)
+    for r in rows:
+        result = "✓ PRESERVED" if r["preserved"] else "✗ MISSING"
+        print(f"  {r['category'][:21]:<22}{r['fact'][:41]:<42}{result:>10}")
+    print("  " + "-" * 86)
+
+def render_critical_matrix(rows):
+    print("\n  CRITICAL FACT CHECK")
+    print("  " + "-" * 72)
+    print(f"  {'FACT':<48}{'RESULT':>18}")
+    print("  " + "-" * 72)
+    for r in rows:
+        result = "✓" if r["preserved"] else "✗"
+        print(f"  {r['fact'][:47]:<48}{result:>18}")
+    print("  " + "-" * 72)
+
+def human_evaluation_sheet(style_name, output):
+    print("\n  HUMAN EVALUATION — ASK PANEL / RATER TO SCORE 1–5")
+    print("  " + "-" * 72)
+    print(f"  Target style: {style_name}")
+    print("  1 = very poor, 5 = excellent")
+    print("  Style adherence        : ____ / 5")
+    print("  Meaning preservation   : ____ / 5")
+    print("  Factual correctness    : ____ / 5")
+    print("  Sinhala fluency        : ____ / 5")
+    print("  Overall usefulness     : ____ / 5")
+    print("  " + "-" * 72)
 
 # ================================================================
-# STATUS BUCKET
-# ================================================================
-
-def status_for_score(score):
-
-    if score >= 90:
-        return "🟢 EXCELLENT"
-
-    elif score >= 80:
-        return "🟢 GOOD"
-
-    elif score >= 70:
-        return "🟡 ACCEPTABLE"
-
-    elif score >= 60:
-        return "🟠 NEEDS IMPROVEMENT"
-
-    else:
-        return "🔴 POOR"
-
-
-# ================================================================
-# MAIN
+# MAIN VIVA EVALUATION
 # ================================================================
 
 def main():
-
     set_seed(SEED)
 
-    print(
-        "\n" +
-        "=" * 80
-    )
+    print("\n" + "=" * 96)
+    print("  SinhalaJournal-LLM | FINAL VIVA STYLE REWRITER DEMONSTRATION")
+    print("=" * 96)
 
-    print(
-        "  SinhalaJournal-LLM | "
-        "STYLE ADAPTER QUALITY EVALUATION"
-    )
-
-    print(
-        "=" * 80
-    )
-
-    print(
-        f"\nSampling up to {SAMPLE_SIZE_PER_STYLE} articles per style "
-        f"from the labeled dataset and scoring each rewrite."
-    )
-
-    print(
-        "\nFact-preservation metrics are measured against the SOURCE "
-        "article; ROUGE is measured against the human-written "
-        "reference rewrite."
-    )
-
-    print(
-        "\nGeneration:"
-    )
-
-    print(f"  Temperature       : {TEMPERATURE}")
-    print(f"  Top-P             : {TOP_P}")
-    print(f"  Top-K             : {TOP_K}")
-    print(f"  Repetition        : {REPETITION_PENALTY}")
-    print(f"  Max new tokens    : {GEN_MAX_NEW_TOKENS}")
+    print("\n  IMPORTANT:")
+    print("  This is a fixed single-article case study for the viva.")
+    print("  It is NOT a statistical benchmark and must not be presented")
+    print("  as the final general accuracy of the adapter.")
+    print("\n  The panel can verify:")
+    print("    1. Style transformation")
+    print("    2. Fact preservation")
+    print("    3. Number/date preservation")
+    print("    4. Non-verbatim rewriting")
+    print("    5. Human-rated fluency and usefulness")
 
     # ------------------------------------------------------------
     # PATH CHECK
     # ------------------------------------------------------------
-
-    print(
-        "\n🔍 Checking paths..."
-    )
-
+    print("\n🔍 Checking paths...")
     if not Path(BASE_MODEL).exists():
-
-        raise FileNotFoundError(
-            f"Base model not found:\n{BASE_MODEL}"
-        )
-
+        raise FileNotFoundError(f"Base model not found:\n{BASE_MODEL}")
     print("   ✅ Base model found")
 
     if not Path(ADAPTER_PATH).exists():
-
-        raise FileNotFoundError(
-            f"Adapter not found:\n{ADAPTER_PATH}"
-        )
-
+        raise FileNotFoundError(f"Adapter not found:\n{ADAPTER_PATH}")
     print("   ✅ Adapter found")
 
-    if not Path(DATASET_PATH).exists():
-
-        raise FileNotFoundError(
-            f"Dataset not found:\n{DATASET_PATH}"
-        )
-
-    print("   ✅ Dataset found")
-
-    # ------------------------------------------------------------
-    # LOAD
-    # ------------------------------------------------------------
-
     tokenizer = load_tokenizer()
-
     model = load_model(tokenizer)
 
+    print("\n" + "=" * 96)
+    print("  SOURCE ARTICLE")
+    print("=" * 96)
+    print(VIVA_ARTICLE)
+
+    results = {}
+
     # ------------------------------------------------------------
-    # SAMPLE DATASET
+    # Generate all five target styles
     # ------------------------------------------------------------
-
-    print(
-        "\n📂 Sampling dataset:"
-    )
-
-    print(f"   {DATASET_PATH}")
-
-    dataset_samples = load_style_samples()
-
     for style_id in STYLE_RULES:
-
-        print(
-            f"   {style_id:<28} "
-            f"{len(dataset_samples[style_id]):>5,} sampled"
-        )
-
-    total_generations = sum(
-        len(rows) for rows in dataset_samples.values()
-    )
-
-    print(f"\n   Total generations: {total_generations:,}")
-
-    # ------------------------------------------------------------
-    # EVALUATE EACH STYLE
-    # ------------------------------------------------------------
-
-    style_records = {style_id: [] for style_id in STYLE_RULES}
-    all_records = []
-
-    for style_id in STYLE_RULES:
-
         style_name = STYLE_NAMES[style_id]
-        rows = dataset_samples[style_id]
 
-        print(
-            "\n\n" + "=" * 80
+        print("\n\n" + "=" * 96)
+        print(f"  TARGET STYLE: {style_name}")
+        print("=" * 96)
+
+        rewritten = generate_rewrite(
+            model,
+            tokenizer,
+            style_id,
+            VIVA_ARTICLE,
         )
 
-        print(f"  {style_name}  ({len(rows)} articles)")
-        print("=" * 80)
-
-        for idx, row in enumerate(rows, start=1):
-
-            article = row["content"]
-            reference = row["reference"]
-
-            try:
-
-                rewritten = generate_rewrite(
-                    model,
-                    tokenizer,
-                    style_id,
-                    article,
-                )
-
-            except Exception as e:
-
-                print(
-                    f"\n❌ [{idx}/{len(rows)}] Generation failed: "
-                    f"{type(e).__name__}: {e}"
-                )
-
-                rewritten = ""
-
-            if not rewritten:
-
-                score = dict(ZERO_SCORE)
-                rouge = dict(ZERO_ROUGE)
-
-            else:
-
-                score = calculate_correctness(
-                    article,
-                    rewritten,
-                )
-
-                rouge = reference_rouge_scores(
-                    rewritten,
-                    reference,
-                )
-
-            record = {
-                "style": style_id,
-                "url": row["url"],
-                "category": row["category"],
-                "rewritten": rewritten,
-                "reference": reference,
-                "score": score,
-                "rouge": {
-                    k: round(v, 4) for k, v in rouge.items()
-                },
-            }
-
-            style_records[style_id].append(record)
-            all_records.append(record)
-
-            flag = ""
-
-            if not rewritten:
-                flag = "  ❌ EMPTY"
-            elif score["is_verbatim_copy"]:
-                flag = "  🚨 VERBATIM COPY"
-
-            print(
-                f"   [{idx:>2}/{len(rows)}] "
-                f"overall={score['overall']:>6.1f}%  "
-                f"rougeL={rouge['rougeL']:.3f}  "
-                f"divergence={score['style_divergence']:>5.1f}%"
-                f"{flag}"
-            )
-
-            # Show the full first generation of each style so it can
-            # be spot-checked by eye, not just by the numbers above.
-            if idx == 1 and rewritten:
-
-                print("\n   --- sample rewrite ---")
-                print(f"   Source : {article[:200]}...")
-                print(f"   Output : {rewritten[:400]}"
-                      f"{'...' if len(rewritten) > 400 else ''}")
-                print(f"   Ref    : {reference[:400]}"
-                      f"{'...' if len(reference) > 400 else ''}")
-                print("   ----------------------\n")
-
-    # ============================================================
-    # AGGREGATE PER STYLE
-    # ============================================================
-
-    def avg(records, path_a, path_b=None):
-
-        if not records:
-            return 0.0
-
-        if path_b is None:
-            values = [r[path_a] for r in records]
-        else:
-            values = [r[path_a][path_b] for r in records]
-
-        return sum(values) / len(values)
-
-    style_summary = {}
-
-    for style_id, records in style_records.items():
-
-        n = len(records)
-
-        if n == 0:
-            style_summary[style_id] = None
+        if not rewritten:
+            print("❌ Empty generation")
+            results[style_id] = {"output": "", "error": "empty"}
             continue
 
-        pass_count = sum(
-            1 for r in records
-            if r["score"]["overall"] >= PASS_THRESHOLD
+        print("\n  REWRITTEN ARTICLE")
+        print("  " + "-" * 88)
+        print(rewritten)
+        print("  " + "-" * 88)
+
+        # Existing automatic diagnostics
+        auto = calculate_correctness(VIVA_ARTICLE, rewritten)
+
+        # Exact fact matrix for the fixed article
+        fact_rows, fact_score = viva_fact_matrix(VIVA_ARTICLE, rewritten)
+        critical_rows, critical_score = critical_fact_matrix(VIVA_ARTICLE, rewritten)
+        number_score, extra_numbers = exact_number_check(VIVA_ARTICLE, rewritten)
+        style_signal_score, style_hits = score_style_signals(style_id, rewritten)
+
+        # Reference metrics ONLY if a human reference is supplied.
+        reference = HUMAN_REFERENCE.get(style_id, "").strip()
+        if reference:
+            rouge = reference_rouge_scores(rewritten, reference)
+        else:
+            rouge = None
+
+        # Copy check
+        divergence, verbatim = score_style_divergence(
+            VIVA_ARTICLE,
+            rewritten,
         )
 
-        verbatim_count = sum(
-            1 for r in records
-            if r["score"]["is_verbatim_copy"]
-        )
+        print("\n  AUTOMATIC DIAGNOSTICS")
+        print("  " + "-" * 72)
+        print(f"  Critical fact preservation : {critical_score:6.2f}%")
+        print(f"  Full fact checklist        : {fact_score:6.2f}%")
+        print(f"  Number preservation        : {number_score:6.2f}%")
+        print(f"  Content similarity         : {auto['content_similarity']:6.2f}%")
+        print(f"  Length score               : {auto['length']:6.2f}%")
+        print(f"  Style divergence           : {divergence:6.2f}%")
+        print(f"  Verbatim copy              : {'YES' if verbatim else 'NO'}")
+        print(f"  Diagnostic style signals   : {style_signal_score:6.2f}%")
+        print(f"  Extra numbers              : {extra_numbers if extra_numbers else 'None'}")
 
-        style_summary[style_id] = {
-            "n": n,
-            "overall": round(avg(records, "score", "overall"), 2),
-            "numbers": round(avg(records, "score", "numbers"), 2),
-            "facts": round(avg(records, "score", "facts"), 2),
-            "content_similarity": round(
-                avg(records, "score", "content_similarity"), 2
+        if rouge is not None:
+            print(f"  ROUGE-1 vs human reference: {rouge['rouge1']:.4f}")
+            print(f"  ROUGE-2 vs human reference: {rouge['rouge2']:.4f}")
+            print(f"  ROUGE-L vs human reference: {rouge['rougeL']:.4f}")
+        else:
+            print("  ROUGE vs human reference  : N/A — no human reference supplied")
+
+        print("\n  STYLE EVIDENCE")
+        print(f"  Target: {style_name}")
+        print(f"  Signals detected ({STYLE_SIGNAL_LABELS[style_id]}):")
+        print(f"    {style_hits if style_hits else 'No automatic signal hits'}")
+
+        render_critical_matrix(critical_rows)
+        render_fact_matrix(fact_rows)
+
+        human_evaluation_sheet(style_name, rewritten)
+
+        results[style_id] = {
+            "style": style_name,
+            "source": VIVA_ARTICLE,
+            "output": rewritten,
+            "critical_fact_preservation": round(critical_score, 2),
+            "full_fact_preservation": round(fact_score, 2),
+            "number_preservation": number_score,
+            "content_similarity": auto["content_similarity"],
+            "length_score": auto["length"],
+            "style_divergence": round(divergence, 2),
+            "verbatim_copy": verbatim,
+            "diagnostic_style_signal_score": style_signal_score,
+            "style_signal_hits": style_hits,
+            "extra_numbers": extra_numbers,
+            "fact_matrix": fact_rows,
+            "critical_fact_matrix": critical_rows,
+            "human_reference_available": bool(reference),
+            "rouge": (
+                {k: round(v, 4) for k, v in rouge.items()}
+                if rouge is not None else None
             ),
-            "length": round(avg(records, "score", "length"), 2),
-            "quality": round(avg(records, "score", "quality"), 2),
-            "style_divergence": round(
-                avg(records, "score", "style_divergence"), 2
-            ),
-            "rouge1": round(avg(records, "rouge", "rouge1"), 4),
-            "rouge2": round(avg(records, "rouge", "rouge2"), 4),
-            "rougeL": round(avg(records, "rouge", "rougeL"), 4),
-            "pass_rate": round(pass_count / n * 100, 2),
-            "verbatim_rate": round(verbatim_count / n * 100, 2),
         }
 
-    # ============================================================
-    # AGGREGATE OVERALL
-    # ============================================================
-
-    n_total = len(all_records)
-
-    overall_accuracy = (
-        avg(all_records, "score", "overall") if n_total else 0.0
-    )
-
-    overall_pass_count = sum(
-        1 for r in all_records
-        if r["score"]["overall"] >= PASS_THRESHOLD
-    )
-
-    overall_verbatim_count = sum(
-        1 for r in all_records
-        if r["score"]["is_verbatim_copy"]
-    )
-
-    overall_rouge1 = avg(all_records, "rouge", "rouge1") if n_total else 0.0
-    overall_rougeL = avg(all_records, "rouge", "rougeL") if n_total else 0.0
-
-    # ============================================================
-    # PRINT QUALITY REPORT
-    # ============================================================
+    # ------------------------------------------------------------
+    # FINAL VIVA SUMMARY
+    # ------------------------------------------------------------
+    print("\n\n" + "=" * 104)
+    print("  FINAL VIVA SUMMARY — DO NOT CALL THIS 'MODEL ACCURACY'")
+    print("=" * 104)
 
     print(
-        "\n\n" + "=" * 96
+        f"\n  {'STYLE':<18}{'CRITICAL FACT':>16}"
+        f"{'ALL FACTS':>14}{'NUMBERS':>12}"
+        f"{'DIVERGENCE':>14}{'COPY?':>10}"
     )
-
-    print("  QUALITY REPORT")
-    print("=" * 96)
-
-    print(
-        f"\n  {'STYLE':<20}{'N':>4}{'ACCURACY':>11}"
-        f"{'ROUGE-L':>10}{'DIVERGENCE':>13}"
-        f"{'PASS%':>9}{'VERBATIM%':>11}"
-    )
-
-    print("  " + "-" * 92)
+    print("  " + "-" * 100)
 
     for style_id in STYLE_RULES:
-
-        s = style_summary[style_id]
-
-        if s is None:
-
-            print(
-                f"  {STYLE_NAMES[style_id]:<20}"
-                f"{'--- no samples available ---':>60}"
-            )
-
+        r = results.get(style_id)
+        if not r or not r.get("output"):
             continue
-
         print(
-            f"  {STYLE_NAMES[style_id]:<20}"
-            f"{s['n']:>4}"
-            f"{s['overall']:>10.2f}%"
-            f"{s['rougeL']:>10.3f}"
-            f"{s['style_divergence']:>12.2f}%"
-            f"{s['pass_rate']:>8.1f}%"
-            f"{s['verbatim_rate']:>10.1f}%"
+            f"  {r['style']:<18}"
+            f"{r['critical_fact_preservation']:>15.1f}%"
+            f"{r['full_fact_preservation']:>13.1f}%"
+            f"{r['number_preservation']:>11.1f}%"
+            f"{r['style_divergence']:>13.1f}%"
+            f"{('YES' if r['verbatim_copy'] else 'NO'):>10}"
         )
 
-    print("  " + "-" * 92)
+    print("  " + "-" * 100)
 
-    print(
-        f"  {'OVERALL':<20}"
-        f"{n_total:>4}"
-        f"{overall_accuracy:>10.2f}%"
-        f"{overall_rougeL:>10.3f}"
-        f"{avg(all_records, 'score', 'style_divergence'):>12.2f}%"
-        f"{(overall_pass_count / n_total * 100 if n_total else 0):>8.1f}%"
-        f"{(overall_verbatim_count / n_total * 100 if n_total else 0):>10.1f}%"
-    )
+    print("\n  HOW TO EXPLAIN THIS TO THE PANEL")
+    print("  1. 'I do not define rewriting accuracy as one number.'")
+    print("  2. 'The rewrite must preserve facts while changing the writing style.'")
+    print("  3. 'The fact matrix checks the source facts individually.'")
+    print("  4. 'Numbers and dates receive explicit checks because they are")
+    print("     high-risk factual elements in news text.'")
+    print("  5. 'Divergence proves the model actually rewrote the article;")
+    print("     divergence alone is NOT a correctness score.'")
+    print("  6. 'Human raters finally judge style adherence, fluency and")
+    print("     usefulness because automatic metrics cannot fully judge them.'")
+    print("  7. 'ROUGE is shown only when a human-written reference rewrite")
+    print("     exists for this exact article and target style.'")
 
-    print(
-        "\n" + "=" * 96
-    )
+    print("\n  IMPORTANT FOR THIS ARTICLE:")
+    print("  The article is about vehicle-import taxation, not sports.")
+    print("  Therefore a SPORTS rewrite should NOT invent matches, players,")
+    print("  scores or sporting events. A good model should preserve the")
+    print("  facts and adapt the style without fabricating a sports story.")
 
-    print(f"\n  ⭐ OVERALL ACCURACY : {overall_accuracy:.2f}%")
-
-    print(
-        f"     Pass rate (>= {PASS_THRESHOLD:.0f}%) : "
-        f"{overall_pass_count}/{n_total} "
-        f"({(overall_pass_count / n_total * 100 if n_total else 0):.2f}%)"
-    )
-
-    print(
-        f"     ROUGE-1 vs reference : {overall_rouge1:.4f}"
-    )
-
-    print(
-        f"     ROUGE-L vs reference : {overall_rougeL:.4f}"
-    )
-
-    if overall_verbatim_count:
-
-        print(
-            f"\n  🚨 {overall_verbatim_count}/{n_total} generations were "
-            f"VERBATIM COPIES of the input (0% style divergence). "
-            f"The accuracy figure above is inflated by these -- a "
-            f"copy trivially preserves every fact. Treat any style "
-            f"with a non-zero verbatim rate as NOT reliably rewriting "
-            f"style."
-        )
-
-    print("\n  Per-style status:")
-
-    for style_id in STYLE_RULES:
-
-        s = style_summary[style_id]
-
-        if s is None:
-            continue
-
-        print(
-            f"    {STYLE_NAMES[style_id]:<20}"
-            f"{status_for_score(s['overall'])}"
-        )
-
-    # ============================================================
-    # SAVE JSON REPORT
-    # ============================================================
-
-    report = {
-
-        "base_model": BASE_MODEL,
-
-        "adapter": ADAPTER_PATH,
-
-        "dataset": DATASET_PATH,
-
-        "sample_size_per_style": SAMPLE_SIZE_PER_STYLE,
-
-        "pass_threshold": PASS_THRESHOLD,
-
-        "generation": {
-
-            "temperature": TEMPERATURE,
-
-            "top_p": TOP_P,
-
-            "top_k": TOP_K,
-
-            "repetition_penalty": REPETITION_PENALTY,
-
-            "max_new_tokens": GEN_MAX_NEW_TOKENS,
-        },
-
-        "style_summary": style_summary,
-
-        "overall": {
-
-            "n": n_total,
-
-            "accuracy": round(overall_accuracy, 2),
-
-            "pass_count": overall_pass_count,
-
-            "pass_rate": round(
-                overall_pass_count / n_total * 100 if n_total else 0.0, 2
-            ),
-
-            "verbatim_copies": overall_verbatim_count,
-
-            "rouge1": round(overall_rouge1, 4),
-
-            "rougeL": round(overall_rougeL, 4),
-        },
-
-        "samples": all_records,
-    }
-
-    with open(
-        REPORT_PATH,
-        "w",
-        encoding="utf-8",
-    ) as f:
-
+    # ------------------------------------------------------------
+    # Save machine-readable report
+    # ------------------------------------------------------------
+    viva_report_path = Path(ADAPTER_PATH) / "viva_style_evaluation.json"
+    with open(viva_report_path, "w", encoding="utf-8") as f:
         json.dump(
-            report,
+            {
+                "evaluation_type": "single_article_viva_case_study",
+                "warning": "Not a statistical benchmark or general model accuracy.",
+                "source_article": VIVA_ARTICLE,
+                "results": results,
+            },
             f,
             ensure_ascii=False,
             indent=2,
         )
 
-    print("\n💾 Report saved:")
-    print(f"   {REPORT_PATH}")
+    print(f"\n💾 Viva JSON report saved:")
+    print(f"   {viva_report_path}")
 
-    print("\n✅ Style quality evaluation completed.")
+    # Also save a clean text/markdown handout for the panel.
+    handout_path = Path(ADAPTER_PATH) / "viva_style_evaluation_handout.md"
+    with open(handout_path, "w", encoding="utf-8") as f:
+        f.write("# SinhalaJournal-LLM — Style Rewriter Viva Evaluation\n\n")
+        f.write("> Single-article case study. This is demonstration evidence, not a statistical benchmark.\n\n")
+        f.write("## Evaluation logic\n\n")
+        f.write("**Successful rewrite = style adherence + meaning/fact preservation + Sinhala fluency + non-verbatim transformation.**\n\n")
+        f.write("## Source article\n\n")
+        f.write(VIVA_ARTICLE + "\n\n")
+        f.write("## Results\n\n")
+        f.write("| Style | Critical facts | All facts | Numbers | Divergence | Verbatim copy |\n")
+        f.write("|---|---:|---:|---:|---:|---|\n")
+        for style_id in STYLE_RULES:
+            r = results.get(style_id)
+            if r and r.get("output"):
+                f.write(
+                    f"| {r['style']} | {r['critical_fact_preservation']:.1f}% | "
+                    f"{r['full_fact_preservation']:.1f}% | "
+                    f"{r['number_preservation']:.1f}% | "
+                    f"{r['style_divergence']:.1f}% | "
+                    f"{'YES' if r['verbatim_copy'] else 'NO'} |\n"
+                )
+        f.write("\n## Human evaluation\n\n")
+        f.write("For each rewrite, rate 1–5:\n\n")
+        f.write("- Style adherence\n- Meaning preservation\n- Factual correctness\n- Sinhala fluency\n- Overall usefulness\n\n")
+        f.write("## Interpretation\n\n")
+        f.write("- Fact preservation answers **Did the information survive?**\n")
+        f.write("- Divergence answers **Did the model actually rewrite?**\n")
+        f.write("- Human style rating answers **Does it sound like the requested style?**\n")
+        f.write("- ROUGE should only be interpreted against a **human reference rewrite**, not the source.\n")
 
+    print(f"\n📝 Viva handout saved:")
+    print(f"   {handout_path}")
 
-# ================================================================
-# RUN
-# ================================================================
+    print("\n✅ Viva demonstration completed.")
+
 
 if __name__ == "__main__":
     main()
