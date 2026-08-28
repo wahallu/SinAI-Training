@@ -1,0 +1,68 @@
+{
+  "created_at_utc": "2026-08-28T09:58:42.251810Z",
+  "condition": "headline_sinllama_v19",
+  "adapter_requested": "models/adapters/headline_sinllama_v19",
+  "base_model_requested": "models/SinLLaMA-merged-base",
+  "input_path": "/home/jovyan/work/sinllama/data/headline_dataset_48k_balanced_val_clean.jsonl",
+  "input_sha256": "f7c4c5c32c00d91a9cb5a23243f30c6a8fc4009da8cdfc23641c5a48c374776c",
+  "sample_size": 300,
+  "seed": 42,
+  "output_path": "/home/jovyan/work/sinllama/Tested_results/headline_v19_predictions_smoketest.jsonl",
+  "output_sha256": "16184bcbb1d93fd0192f4f0e40cb4e1d7eddda70f2deb0fa44ea6b43f1b84c57",
+  "rows": 15,
+  "generated_rows_this_run": 15,
+  "generation_config": {
+    "do_sample": true,
+    "temperature": 0.3,
+    "top_p": 0.9,
+    "repetition_penalty": 1.1,
+    "no_repeat_ngram_size": 2
+  },
+  "summary": {
+    "short": {
+      "n": 5,
+      "in_band_rate": 1.0,
+      "artifact_rate": 0.0,
+      "empty_rate": 0.0
+    },
+    "medium": {
+      "n": 5,
+      "in_band_rate": 0.8,
+      "artifact_rate": 0.0,
+      "empty_rate": 0.0
+    },
+    "long": {
+      "n": 5,
+      "in_band_rate": 0.2,
+      "artifact_rate": 0.0,
+      "empty_rate": 0.0
+    },
+    "overall": {
+      "n": 15,
+      "in_band_rate": 0.6666666666666666,
+      "artifact_rate": 0.0
+    },
+    "own_band_rouge": {
+      "n": 5,
+      "rouge1": 0.10666666666666666,
+      "rougeL": 0.10666666666666666,
+      "bleu": 0.07128052926708366
+    }
+  },
+  "reference_v19_measurement_claude_md": {
+    "in_band": {
+      "short": 0.897,
+      "medium": 0.743,
+      "long": 0.75,
+      "overall": 0.797
+    },
+    "artifact": {
+      "short": 0.0,
+      "medium": 0.003,
+      "long": 0.03,
+      "overall": 0.011
+    }
+  },
+  "wall_seconds_this_run": 11.037,
+  "peak_gpu_memory_bytes": 7656702976
+}

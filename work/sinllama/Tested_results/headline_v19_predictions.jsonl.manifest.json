@@ -1,0 +1,68 @@
+{
+  "created_at_utc": "2026-08-28T10:13:05.148602Z",
+  "condition": "headline_sinllama_v19",
+  "adapter_requested": "models/adapters/headline_sinllama_v19",
+  "base_model_requested": "models/SinLLaMA-merged-base",
+  "input_path": "/home/jovyan/work/sinllama/data/headline_dataset_48k_balanced_val_clean.jsonl",
+  "input_sha256": "f7c4c5c32c00d91a9cb5a23243f30c6a8fc4009da8cdfc23641c5a48c374776c",
+  "sample_size": 300,
+  "seed": 42,
+  "output_path": "/home/jovyan/work/sinllama/Tested_results/headline_v19_predictions.jsonl",
+  "output_sha256": "b05ca6297deb48db5320d3a80b803c65c4fe3f31e95a7d6db3ef5f3e646ea16a",
+  "rows": 900,
+  "generated_rows_this_run": 900,
+  "generation_config": {
+    "do_sample": true,
+    "temperature": 0.3,
+    "top_p": 0.9,
+    "repetition_penalty": 1.1,
+    "no_repeat_ngram_size": 2
+  },
+  "summary": {
+    "short": {
+      "n": 300,
+      "in_band_rate": 0.93,
+      "artifact_rate": 0.0,
+      "empty_rate": 0.0033333333333333335
+    },
+    "medium": {
+      "n": 300,
+      "in_band_rate": 0.42333333333333334,
+      "artifact_rate": 0.01,
+      "empty_rate": 0.0
+    },
+    "long": {
+      "n": 300,
+      "in_band_rate": 0.3233333333333333,
+      "artifact_rate": 0.03666666666666667,
+      "empty_rate": 0.0
+    },
+    "overall": {
+      "n": 900,
+      "in_band_rate": 0.5588888888888889,
+      "artifact_rate": 0.015555555555555555
+    },
+    "own_band_rouge": {
+      "n": 300,
+      "rouge1": 0.12629196297101838,
+      "rougeL": 0.12344557692772412,
+      "bleu": 0.0
+    }
+  },
+  "reference_v19_measurement_claude_md": {
+    "in_band": {
+      "short": 0.897,
+      "medium": 0.743,
+      "long": 0.75,
+      "overall": 0.797
+    },
+    "artifact": {
+      "short": 0.0,
+      "medium": 0.003,
+      "long": 0.03,
+      "overall": 0.011
+    }
+  },
+  "wall_seconds_this_run": 625.99,
+  "peak_gpu_memory_bytes": 7656702976
+}

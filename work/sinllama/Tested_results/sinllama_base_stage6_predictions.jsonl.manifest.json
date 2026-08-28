@@ -1,0 +1,59 @@
+{
+  "created_at_utc": "2026-08-27T13:59:03.635793Z",
+  "condition": "sinllama_merged_base_no_task_lora",
+  "system": "SinLLaMA merged base baseline",
+  "base_model": "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base",
+  "base_model_requested": "models/SinLLaMA-merged-base",
+  "base_model_metadata": {
+    "config.json": {
+      "sha256": "b2ae185e2d797ccb6df508b7bf384d86dc4097d02024213e378be54589a7e7c5",
+      "bytes": 1161
+    },
+    "generation_config.json": {
+      "sha256": "51e56b365d6250cecc65ab64843b8ca0d6685038dc7a6cd2dd9a5664e07ddb93",
+      "bytes": 197
+    },
+    "tokenizer_config.json": {
+      "sha256": "5b433503fd54181b7d2c2b3e7ff07a497ba0817763129e9b55b5a0f3f19d5dd5",
+      "bytes": 359
+    },
+    "tokenizer.json": {
+      "sha256": "549f579ab85fa6f63fe7d9a4d9e62918011c35bebf45c6bb8000a6ae89a9a3d7",
+      "bytes": 19338079
+    }
+  },
+  "adapter": null,
+  "task_adapter_loaded": false,
+  "input_path": "/home/jovyan/work/sinllama/data/grammar_stage6_inputs.jsonl",
+  "input_sha256": "e6dfdf31a8d75264a313450d9ce727949cf4a82916e411c972b998060066a66e",
+  "expected_input_sha256": "e6dfdf31a8d75264a313450d9ce727949cf4a82916e411c972b998060066a66e",
+  "input_hash_check_skipped": false,
+  "input_rows_available": 286,
+  "rows": 286,
+  "complete_frozen_comparison": true,
+  "output_path": "/home/jovyan/work/sinllama/Tested_results/sinllama_base_stage6_predictions.jsonl",
+  "output_sha256": "eb79c96883b655da76afc2943d1a3fc119fd11ff9f9b023af2b235cf76ebda5b",
+  "instruction": "Correct the grammar of the Sinhala sentence. ONLY fix errors. If the sentence is already correct, return it EXACTLY unchanged — do not rephrase, reorder, or change tense.",
+  "instruction_sha256": "bc0a769b4fbd1f16bdd7e9fd9633feca136a65bdbaa967e71fd8a2edeebf51bc",
+  "prompt_template": "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n",
+  "prompt_template_sha256": "064d00a9e3dbd4c5ffd955579d86e6f46ed9a071ab98d2fbd8a47ee0d4d98aab",
+  "unicode_normalization": "NFC",
+  "generation": {
+    "do_sample": false,
+    "temperature": 1.0,
+    "repetition_penalty": 1.0,
+    "max_seq_length": 1024,
+    "max_new_tokens": 256,
+    "stop_at_newline": true
+  },
+  "fallback_rows": 0,
+  "resume_rows": 0,
+  "generated_rows_this_run": 286,
+  "wall_seconds_this_run": 1996.387,
+  "recorded_inference_seconds": 1991.579,
+  "recorded_examples_per_second": 0.1436,
+  "peak_gpu_memory_bytes": 7656702976,
+  "software": {
+    "torch": "2.6.0+cu124"
+  }
+}

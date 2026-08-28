@@ -1,0 +1,1358 @@
+{
+  "_file_location_note": "This combined file lives under work/sinllama/eval/, NOT inside work/sinllama/models/adapters/style_sinllama_v13/, per the task's explicit instruction not to change anything in that adapter directory. The original single-article case study at models/adapters/style_sinllama_v13/viva_style_evaluation.json was left untouched; its content is copied unchanged below.",
+  "evaluation_type": "single_article_viva_case_study",
+  "warning": "Not a statistical benchmark or general model accuracy.",
+  "source_article": "විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් ගණනාවක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.",
+  "results": {
+    "style_1_formal_news": {
+      "style": "FORMAL NEWS",
+      "source": "විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් ගණනාවක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.",
+      "output": "විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් කිහිපයක් හඳුන්වා දී ඇත. 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්ද මෙහි ප්‍රධානතම වෙනස ලෙස හඳුනා ගනී. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇත. යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර ඇත. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.",
+      "critical_fact_preservation": 100.0,
+      "full_fact_preservation": 100.0,
+      "number_preservation": 100.0,
+      "content_similarity": 96.6,
+      "length_score": 98.61,
+      "style_divergence": 28.86,
+      "verbatim_copy": false,
+      "diagnostic_style_signal_score": 71.43,
+      "style_signal_hits": [
+        "පෙන්වා දෙති",
+        "බලාත්මක",
+        "ප්‍රකාශයට",
+        "අදාළ",
+        "සම්බන්ධයෙන්"
+      ],
+      "extra_numbers": [],
+      "fact_matrix": [
+        {
+          "category": "Cause / context",
+          "fact": "විදේශ විනිමය සංචිතවල පීඩනය",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Cause / context",
+          "fact": "ආර්ථික ප්‍රතිසංස්කරණ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Policy subject",
+          "fact": "වාහන ආනයනය සම්බන්ධ බදු ප්‍රතිපත්ති වෙනස්කම්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Tax rate",
+          "fact": "සියයට 50ක තාවකාලික අතිරේක බද්ද",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Effective date",
+          "fact": "2026 මැයි 16",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Legal basis",
+          "fact": "රේගු පනත",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Issuing authority",
+          "fact": "ජනාධිපතිවරයා",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "මගී රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ජීප් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "බස් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "භාණ්ඩ ප්‍රවාහන රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ගිලන් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "විදුලි වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "දෙමුහුම් වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "යතුරුපැදි",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "ත්‍රී රෝද රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Duration",
+          "fact": "කෙටි කාලීන පියවරක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "End condition",
+          "fact": "ආර්ථිකය ස්ථාවර වන තෙක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        }
+      ],
+      "critical_fact_matrix": [
+        {
+          "fact": "50% tax",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "2026 May 16",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Customs Act",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "President issued order",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Motorcycles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Three-wheelers excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Commercial-use imported vehicles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Temporary measure",
+          "source": true,
+          "output": true,
+          "preserved": true
+        }
+      ],
+      "human_reference_available": false,
+      "rouge": null
+    },
+    "style_2_editorial": {
+      "style": "EDITORIAL",
+      "source": "විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් ගණනාවක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.",
+      "output": "විදේශ විනිමය සංචිතවල පවතින පීඩනය සහ සිදු කෙරෙන ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයන සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් කිහිපයක් හඳුන්වා දී ඇති බව අපට අවධානය යොමු හැකිය. විශේෂයෙන්ම, මෙහිදී ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට ක්‍රියාත්මක වන සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය, මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහාද අදාළ කර ඇත. කෙසේ වෙතත්, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් සම්පූර්ණයෙන්ම බැහැර කර තිබීම අප සැලකිය යුතුය. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, සමස්තයක් ලෙස ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරීන් විසින් පෙන්වා දෙනු ලැබේ.",
+      "critical_fact_preservation": 100.0,
+      "full_fact_preservation": 89.47,
+      "number_preservation": 100.0,
+      "content_similarity": 92.51,
+      "length_score": 67.97,
+      "style_divergence": 13.86,
+      "verbatim_copy": false,
+      "diagnostic_style_signal_score": 66.67,
+      "style_signal_hits": [
+        "සැලකිය යුතුය",
+        "සමස්තයක් ලෙස",
+        "කෙසේ වෙතත්",
+        "පියවර"
+      ],
+      "extra_numbers": [],
+      "fact_matrix": [
+        {
+          "category": "Cause / context",
+          "fact": "විදේශ විනිමය සංචිතවල පීඩනය",
+          "source": "YES",
+          "output": "NO",
+          "preserved": false
+        },
+        {
+          "category": "Cause / context",
+          "fact": "ආර්ථික ප්‍රතිසංස්කරණ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Policy subject",
+          "fact": "වාහන ආනයනය සම්බන්ධ බදු ප්‍රතිපත්ති වෙනස්කම්",
+          "source": "YES",
+          "output": "NO",
+          "preserved": false
+        },
+        {
+          "category": "Tax rate",
+          "fact": "සියයට 50ක තාවකාලික අතිරේක බද්ද",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Effective date",
+          "fact": "2026 මැයි 16",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Legal basis",
+          "fact": "රේගු පනත",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Issuing authority",
+          "fact": "ජනාධිපතිවරයා",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "මගී රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ජීප් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "බස් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "භාණ්ඩ ප්‍රවාහන රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ගිලන් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "විදුලි වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "දෙමුහුම් වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "යතුරුපැදි",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "ත්‍රී රෝද රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Duration",
+          "fact": "කෙටි කාලීන පියවරක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "End condition",
+          "fact": "ආර්ථිකය ස්ථාවර වන තෙක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        }
+      ],
+      "critical_fact_matrix": [
+        {
+          "fact": "50% tax",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "2026 May 16",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Customs Act",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "President issued order",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Motorcycles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Three-wheelers excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Commercial-use imported vehicles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Temporary measure",
+          "source": true,
+          "output": true,
+          "preserved": true
+        }
+      ],
+      "human_reference_available": false,
+      "rouge": null
+    },
+    "style_3_sports": {
+      "style": "SPORTS",
+      "source": "විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් ගණනාවක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.",
+      "output": "ශ්‍රී ලංකාවේ විදේශ විනිමය සංචිතවල පවතින දැඩි පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයන සම්බන්ධයෙන් ඉතා දැශත බදු ප්‍රතිපත්ති වෙනස්කම් කිහිපයක් හඳුන්වා දී ඇත. එම තීරණ අතර ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට ක්‍රියාත්මක වන සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහාද අදාළ වේ. කෙසේ වෙතත් යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නව නීතියෙන් සම්පූර්ණයෙන්ම බැහැර කර ඇත. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති!",
+      "critical_fact_preservation": 100.0,
+      "full_fact_preservation": 89.47,
+      "number_preservation": 100.0,
+      "content_similarity": 93.89,
+      "length_score": 89.42,
+      "style_divergence": 32.02,
+      "verbatim_copy": false,
+      "diagnostic_style_signal_score": 14.29,
+      "style_signal_hits": [
+        "ජය"
+      ],
+      "extra_numbers": [],
+      "fact_matrix": [
+        {
+          "category": "Cause / context",
+          "fact": "විදේශ විනිමය සංචිතවල පීඩනය",
+          "source": "YES",
+          "output": "NO",
+          "preserved": false
+        },
+        {
+          "category": "Cause / context",
+          "fact": "ආර්ථික ප්‍රතිසංස්කරණ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Policy subject",
+          "fact": "වාහන ආනයනය සම්බන්ධ බදු ප්‍රතිපත්ති වෙනස්කම්",
+          "source": "YES",
+          "output": "NO",
+          "preserved": false
+        },
+        {
+          "category": "Tax rate",
+          "fact": "සියයට 50ක තාවකාලික අතිරේක බද්ද",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Effective date",
+          "fact": "2026 මැයි 16",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Legal basis",
+          "fact": "රේගු පනත",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Issuing authority",
+          "fact": "ජනාධිපතිවරයා",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "මගී රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ජීප් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "බස් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "භාණ්ඩ ප්‍රවාහන රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ගිලන් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "විදුලි වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "දෙමුහුම් වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "යතුරුපැදි",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "ත්‍රී රෝද රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Duration",
+          "fact": "කෙටි කාලීන පියවරක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "End condition",
+          "fact": "ආර්ථිකය ස්ථාවර වන තෙක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        }
+      ],
+      "critical_fact_matrix": [
+        {
+          "fact": "50% tax",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "2026 May 16",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Customs Act",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "President issued order",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Motorcycles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Three-wheelers excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Commercial-use imported vehicles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Temporary measure",
+          "source": true,
+          "output": true,
+          "preserved": true
+        }
+      ],
+      "human_reference_available": false,
+      "rouge": null
+    },
+    "style_4_youth": {
+      "style": "YOUTH",
+      "source": "විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් ගණනාවක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.",
+      "output": "විදේශ විනිමය සංචිතවල තියෙන පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් විදිහට ශ්‍රී ලංකා රජය දැන් ගොඩක් වෙනස් පියවරයක් ගෙන තිබෙනවා. ඒ තමයි වාහන ආනයනය කිරීමේදී සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් කිහිපයක් හඳුන්වා දීම. මේ අතර තියෙන ප්‍රධානම වෙනස වෙන්නේ 2026 මැයි 16 වන දින සිට ක්‍රියාත්මක වන සියයට 50ක තාවකාලික අතිරේක බද්දක්. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරපු විශේෂ නියෝගයක් මේකට පදනම් වෙනවා. ඒ අනුව මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ වගේම විදුලි හා දෙමුහුම් වාහනවලටත් මේක අදාළ වෙනවා. හැබැයි යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන විතරක් මේ නීතියෙන් සම්පූර්ණයෙන්ම බැහැර කර තියෙනවා. මේ තීරණය දැනට කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කරලා තියෙන්නේ. ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පැමිණෙන්න දක්වා මේ අතිරේක බද්ද ක්‍රියාත්මක වෙයි කියලා රජයේ නිලධාරීන් පෙන්වා දෙනවා.",
+      "critical_fact_preservation": 100.0,
+      "full_fact_preservation": 94.74,
+      "number_preservation": 100.0,
+      "content_similarity": 78.14,
+      "length_score": 74.93,
+      "style_divergence": 64.22,
+      "verbatim_copy": false,
+      "diagnostic_style_signal_score": 33.33,
+      "style_signal_hits": [
+        "දැනට",
+        "මේ"
+      ],
+      "extra_numbers": [],
+      "fact_matrix": [
+        {
+          "category": "Cause / context",
+          "fact": "විදේශ විනිමය සංචිතවල පීඩනය",
+          "source": "YES",
+          "output": "NO",
+          "preserved": false
+        },
+        {
+          "category": "Cause / context",
+          "fact": "ආර්ථික ප්‍රතිසංස්කරණ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Policy subject",
+          "fact": "වාහන ආනයනය සම්බන්ධ බදු ප්‍රතිපත්ති වෙනස්කම්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Tax rate",
+          "fact": "සියයට 50ක තාවකාලික අතිරේක බද්ද",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Effective date",
+          "fact": "2026 මැයි 16",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Legal basis",
+          "fact": "රේගු පනත",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Issuing authority",
+          "fact": "ජනාධිපතිවරයා",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "මගී රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ජීප් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "බස් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "භාණ්ඩ ප්‍රවාහන රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ගිලන් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "විදුලි වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "දෙමුහුම් වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "යතුරුපැදි",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "ත්‍රී රෝද රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Duration",
+          "fact": "කෙටි කාලීන පියවරක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "End condition",
+          "fact": "ආර්ථිකය ස්ථාවර වන තෙක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        }
+      ],
+      "critical_fact_matrix": [
+        {
+          "fact": "50% tax",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "2026 May 16",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Customs Act",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "President issued order",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Motorcycles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Three-wheelers excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Commercial-use imported vehicles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Temporary measure",
+          "source": true,
+          "output": true,
+          "preserved": true
+        }
+      ],
+      "human_reference_available": false,
+      "rouge": null
+    },
+    "style_5_feature": {
+      "style": "FEATURE",
+      "source": "විදේශ විනිමය සංචිතවල පීඩනය සහ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස, ශ්‍රී ලංකා රජය විසින් මේ වන විට වාහන ආනයනය සම්බන්ධයෙන් සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් ගණනාවක් හඳුන්වා දී ඇත. ඒ අතරින් ප්‍රධානතම වෙනස වන්නේ 2026 මැයි 16 වන දින සිට බලාත්මක කරන ලද සියයට 50ක තාවකාලික අතිරේක බද්දයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ කර ඇති අතර, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නීතියෙන් බැහැර කර තිබේ. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශයට පත් කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරිහු පෙන්වා දෙති.",
+      "output": "ක් හමාමින් යන එක් උදෑසනක, විදේශ විනිමය සංචිතවල පවතින දැඩි පීඩනය හමුවේ ආර්ථික ප්‍රතිසංස්කරණවල ප්‍රතිඵලයක් ලෙස ශ්‍රී ලංකා රජය විසින් ඉතා දැශ්‍ර තීරණයක් ගෙන ඇත. වාහන ආනයන ක්ෂේත්‍රය පිළිබඳව අදාළ බලධාරීන් විසින් මේ වන විට සැලකිය යුතු බදු ප්‍රතිපත්ති වෙනස්කම් කිහිපයක් හඳුන්වා දී ඇත. එම තීරණ් අතර ප්‍රධානතම වෙනස වන්නේ 2026 මැයි මාස 16 වන දින සිට ක්‍රියාත්මක වන පරිදි සියයට 50ක තාවකාලික අතිරේක බද්දක් හඳුන්වා දීමයි. ජනාධිපතිවරයා විසින් රේගු පනත යටතේ නිකුත් කරන ලද මෙම විශේෂ නියෝගය, මගී රථ, ජීප් රථ, බස් රථ, භාණ්ඩ ප්‍රවාහන රථ, ගිලන් රථ මෙන්ම විදුලි හා දෙමුහුම් වාහන සඳහා ද අදාළ වේ. කෙසේ වෙතත්, යතුරුපැදි, ත්‍රී රෝද රථ සහ වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන පමණක් මෙම නව නීතියෙන් සම්පූර්ණයෙන්ම බැහැර කර ඇත. මෙම තීරණය කෙටි කාලීන පියවරක් ලෙස ප්‍රකාශ කර ඇති අතර, ආර්ථිකය යම් තරමක ස්ථාවරත්වයකට පත්වන තෙක් මෙම අතිරේක බද්ද ක්‍රියාත්මක වනු ඇතැයි රජයේ නිලධාරීන් විසින් පෙන්වා දෙති.",
+      "critical_fact_preservation": 87.5,
+      "full_fact_preservation": 89.47,
+      "number_preservation": 100.0,
+      "content_similarity": 89.87,
+      "length_score": 61.28,
+      "style_divergence": 45.52,
+      "verbatim_copy": false,
+      "diagnostic_style_signal_score": 14.29,
+      "style_signal_hits": [
+        "කෙසේ වෙතත්"
+      ],
+      "extra_numbers": [],
+      "fact_matrix": [
+        {
+          "category": "Cause / context",
+          "fact": "විදේශ විනිමය සංචිතවල පීඩනය",
+          "source": "YES",
+          "output": "NO",
+          "preserved": false
+        },
+        {
+          "category": "Cause / context",
+          "fact": "ආර්ථික ප්‍රතිසංස්කරණ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Policy subject",
+          "fact": "වාහන ආනයනය සම්බන්ධ බදු ප්‍රතිපත්ති වෙනස්කම්",
+          "source": "YES",
+          "output": "NO",
+          "preserved": false
+        },
+        {
+          "category": "Tax rate",
+          "fact": "සියයට 50ක තාවකාලික අතිරේක බද්ද",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Effective date",
+          "fact": "2026 මැයි 16",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Legal basis",
+          "fact": "රේගු පනත",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Issuing authority",
+          "fact": "ජනාධිපතිවරයා",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "මගී රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ජීප් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "බස් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "භාණ්ඩ ප්‍රවාහන රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "ගිලන් රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "විදුලි වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Covered vehicle",
+          "fact": "දෙමුහුම් වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "යතුරුපැදි",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "ත්‍රී රෝද රථ",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Excluded vehicle",
+          "fact": "වාණිජ කටයුතු සඳහා භාවිතා කරන ආනයනික වාහන",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "Duration",
+          "fact": "කෙටි කාලීන පියවරක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        },
+        {
+          "category": "End condition",
+          "fact": "ආර්ථිකය ස්ථාවර වන තෙක්",
+          "source": "YES",
+          "output": "YES",
+          "preserved": true
+        }
+      ],
+      "critical_fact_matrix": [
+        {
+          "fact": "50% tax",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "2026 May 16",
+          "source": true,
+          "output": false,
+          "preserved": false
+        },
+        {
+          "fact": "Customs Act",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "President issued order",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Motorcycles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Three-wheelers excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Commercial-use imported vehicles excluded",
+          "source": true,
+          "output": true,
+          "preserved": true
+        },
+        {
+          "fact": "Temporary measure",
+          "source": true,
+          "output": true,
+          "preserved": true
+        }
+      ],
+      "human_reference_available": false,
+      "rouge": null
+    }
+  },
+  "frozen_holdout_evaluation": {
+    "_holdout_provenance_note": "Two holdout sets exist for this evaluation, built independently and NOT the same 100 articles. The scored results below were generated against RUN A's holdout ('actual_generation_holdout' here), sampled from style_rewriter/data/train1.jsonl (521,980 rows). VERIFIED VALID: every one of train1.jsonl's 521,980 unique URLs was confirmed present in the full 665,887-article corpus (summarizer/all_articles_merged.json) that this session's own Step 1 deliverable ('spec_step1_holdout') was built from -- train1.jsonl is a 100% subset/earlier extraction of that same corpus, not a separate or contaminated source. Both holdouts independently excluded the identical 11,867-URL set used anywhere in style training/candidate generation, so Run A's holdout is a legitimate unseen sample regardless of which of the two source files it was drawn from. No regeneration was needed; spec_step1_holdout is included below only as a record of this session's original (different, equally valid, but unused) 100-article draw from the same underlying corpus.",
+    "actual_generation_holdout": {
+      "sampled_from": "/home/jovyan/style_rewriter/data/train1.jsonl",
+      "holdout_size": 100,
+      "sampling_seed": 42,
+      "excluded_used_urls_count": 11867,
+      "eligibility_filter": "non-empty content, 250-1200 chars (length cap chosen to keep LoRA/base generation runtime tractable for a 2-system x 5-style x N-article matrix)"
+    },
+    "spec_step1_holdout_unused_for_scoring": {
+      "corpus_source": "/home/jovyan/summarizer/all_articles_merged.json",
+      "corpus_size": 665887,
+      "holdout_size": 100,
+      "sampling_seed": 42,
+      "excluded_used_urls_count": 11867,
+      "category_distribution": {
+        "Business": 8,
+        "Crime/Law": 8,
+        "Editorial": 7,
+        "Entertainment": 7,
+        "Environment": 7,
+        "Health": 7,
+        "International": 7,
+        "Local": 7,
+        "Other": 7,
+        "Politics": 7,
+        "Religion": 7,
+        "Science": 7,
+        "Sports": 7,
+        "Technology": 7
+      }
+    },
+    "holdout_size": 100,
+    "sampling_seed": 42,
+    "scoring_method_note": "Reuses work/sinllama/scripts/test_style_viva.py's existing scoring functions (score_numbers, score_content_similarity, score_length, score_style_divergence, score_style_signals, score_fact_tokens) unmodified. critical_fact_preservation is an explicit, disclosed adaptation (numbers + long-token coverage, built from the module's own extract_numbers()/tokenize_sinhala()/STOP_WORDS primitives) since the module's only per-article 'critical facts' concept (VIVA_FACTS/CRITICAL_FACTS) is hand-authored for one fixed viva article and cannot mechanically scale to 100 new articles. See this script's module docstring for full detail.",
+    "baseline_beats_adapter_anomalies": [
+      {
+        "style": "formal",
+        "metric": "diagnostic_style_signal_score",
+        "adapter": 19.86,
+        "baseline": 24.86,
+        "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+      },
+      {
+        "style": "sports",
+        "metric": "diagnostic_style_signal_score",
+        "adapter": 7.0,
+        "baseline": 8.14,
+        "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+      },
+      {
+        "style": "youth",
+        "metric": "diagnostic_style_signal_score",
+        "adapter": 18.0,
+        "baseline": 19.17,
+        "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+      },
+      {
+        "style": "feature",
+        "metric": "diagnostic_style_signal_score",
+        "adapter": 3.57,
+        "baseline": 4.29,
+        "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+      }
+    ],
+    "per_style_results": {
+      "formal": {
+        "adapter": {
+          "critical_fact_preservation": 85.36,
+          "full_fact_preservation": 84.09,
+          "number_preservation": 94.26,
+          "content_similarity": 91.08,
+          "length_score": 86.71,
+          "style_divergence": 26.38,
+          "diagnostic_style_signal_score": 19.86,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        },
+        "no_adapter_baseline": {
+          "critical_fact_preservation": 17.5,
+          "full_fact_preservation": 17.83,
+          "number_preservation": 31.02,
+          "content_similarity": 32.51,
+          "length_score": 3.92,
+          "style_divergence": 94.44,
+          "diagnostic_style_signal_score": 24.86,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        }
+      },
+      "editorial": {
+        "adapter": {
+          "critical_fact_preservation": 74.91,
+          "full_fact_preservation": 74.46,
+          "number_preservation": 90.61,
+          "content_similarity": 82.57,
+          "length_score": 52.05,
+          "style_divergence": 47.32,
+          "diagnostic_style_signal_score": 23.33,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        },
+        "no_adapter_baseline": {
+          "critical_fact_preservation": 16.69,
+          "full_fact_preservation": 17.91,
+          "number_preservation": 30.42,
+          "content_similarity": 29.58,
+          "length_score": 2.12,
+          "style_divergence": 94.59,
+          "diagnostic_style_signal_score": 6.0,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        }
+      },
+      "sports": {
+        "adapter": {
+          "critical_fact_preservation": 83.47,
+          "full_fact_preservation": 82.92,
+          "number_preservation": 93.16,
+          "content_similarity": 90.53,
+          "length_score": 78.21,
+          "style_divergence": 31.37,
+          "diagnostic_style_signal_score": 7.0,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        },
+        "no_adapter_baseline": {
+          "critical_fact_preservation": 18.05,
+          "full_fact_preservation": 19.12,
+          "number_preservation": 28.29,
+          "content_similarity": 32.86,
+          "length_score": 3.24,
+          "style_divergence": 94.6,
+          "diagnostic_style_signal_score": 8.14,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        }
+      },
+      "youth": {
+        "adapter": {
+          "critical_fact_preservation": 76.29,
+          "full_fact_preservation": 73.89,
+          "number_preservation": 94.51,
+          "content_similarity": 82.35,
+          "length_score": 75.49,
+          "style_divergence": 41.67,
+          "diagnostic_style_signal_score": 18.0,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        },
+        "no_adapter_baseline": {
+          "critical_fact_preservation": 17.24,
+          "full_fact_preservation": 17.98,
+          "number_preservation": 29.22,
+          "content_similarity": 31.46,
+          "length_score": 3.91,
+          "style_divergence": 94.52,
+          "diagnostic_style_signal_score": 19.17,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        }
+      },
+      "feature": {
+        "adapter": {
+          "critical_fact_preservation": 73.48,
+          "full_fact_preservation": 72.83,
+          "number_preservation": 91.9,
+          "content_similarity": 81.19,
+          "length_score": 47.5,
+          "style_divergence": 53.87,
+          "diagnostic_style_signal_score": 3.57,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        },
+        "no_adapter_baseline": {
+          "critical_fact_preservation": 17.77,
+          "full_fact_preservation": 18.99,
+          "number_preservation": 27.62,
+          "content_similarity": 33.99,
+          "length_score": 3.21,
+          "style_divergence": 94.89,
+          "diagnostic_style_signal_score": 4.29,
+          "verbatim_copy_rate_pct": 0.0,
+          "n": 100
+        }
+      }
+    }
+  },
+  "style_classification_evaluation": {
+    "method": "Lightweight, LLM-free character-trigram cosine-similarity classifier (reusing test_style_viva.py's char_ngrams()/cosine_similarity_counter(), the same function behind Step 3's content_similarity metric). Reference profiles built from 25 real human-accepted training examples per style (style_rewriter/data/test_words_fixed.jsonl, seed=42 sample, disjoint from the frozen holdout). Each output is classified by nearest cosine similarity to the 5 reference profiles. Replaces two rejected zero-shot LLM approaches (see 'superseded_approaches' below) that were tested on 10-16 real examples each and found non-discriminating or non-answering before being abandoned -- not run at full scale and reported anyway.",
+    "adapter": {
+      "accuracy": 65.4,
+      "precision": 72.17,
+      "recall": 65.4,
+      "f1": 66.19,
+      "per_style": {
+        "FORMAL": {
+          "precision": 49.12,
+          "recall": 84.0,
+          "f1": 61.99,
+          "support": 100
+        },
+        "EDITORIAL": {
+          "precision": 100.0,
+          "recall": 58.0,
+          "f1": 73.42,
+          "support": 100
+        },
+        "SPORTS": {
+          "precision": 47.01,
+          "recall": 55.0,
+          "f1": 50.69,
+          "support": 100
+        },
+        "YOUTH": {
+          "precision": 100.0,
+          "recall": 86.0,
+          "f1": 92.47,
+          "support": 100
+        },
+        "FEATURE": {
+          "precision": 64.71,
+          "recall": 44.0,
+          "f1": 52.38,
+          "support": 100
+        }
+      },
+      "n": 500
+    },
+    "baseline": {
+      "accuracy": 23.8,
+      "precision": 25.33,
+      "recall": 23.8,
+      "f1": 22.0,
+      "per_style": {
+        "FORMAL": {
+          "precision": 20.25,
+          "recall": 33.0,
+          "f1": 25.1,
+          "support": 100
+        },
+        "EDITORIAL": {
+          "precision": 34.29,
+          "recall": 12.0,
+          "f1": 17.78,
+          "support": 100
+        },
+        "SPORTS": {
+          "precision": 25.54,
+          "recall": 47.0,
+          "f1": 33.1,
+          "support": 100
+        },
+        "YOUTH": {
+          "precision": 26.0,
+          "recall": 13.0,
+          "f1": 17.33,
+          "support": 100
+        },
+        "FEATURE": {
+          "precision": 20.59,
+          "recall": 14.0,
+          "f1": 16.67,
+          "support": 100
+        }
+      },
+      "n": 500
+    },
+    "reference_example_counts_per_style": {
+      "youth": 25,
+      "editorial": 25,
+      "formal": 25,
+      "sports": 25,
+      "feature": 25
+    },
+    "superseded_approaches": [
+      {
+        "approach": "Zero-shot classification, plain SinLLaMA-merged-base (no adapter)",
+        "outcome": "REJECTED -- 83-87% of 1000 completions ignored the instruction and continued generating article text instead of answering."
+      },
+      {
+        "approach": "Zero-shot classification, style_sinllama_v13 ADAPTER attached, non-rewrite-shaped prompt",
+        "outcome": "REJECTED after a 15-example pretest (3/5 styles represented, all 5 tested) -- 13/15 produced a parseable label, but only 3/15 (20%) were correct, statistically indistinguishable from random guessing among 5 classes. The adapter (fine-tuned only for rewriting) does not discriminate style from content when repurposed as a classifier; it defaults toward 'FORMAL' or echoes the label list regardless of the input's actual style."
+      }
+    ],
+    "limitations": "This is a coarse, surface-level (character n-gram) similarity proxy, not a validated style classifier, and has not been checked against human judgments. Reference profiles for the smallest-represented style (feature, 539 total training rows) are the noisiest. Treat these accuracy numbers as a weak, disclosed signal for relative comparison (adapter vs baseline), not as ground truth about style quality."
+  },
+  "prompt_consistency_check": {
+    "per_style": {
+      "formal": {
+        "training_prompt": "### Instruction:\nWrite the article as a professional Sinhala news report.\n\n- Objective and factual\n- Clear journalistic Sinhala\n- Most important information first\n- Formal vocabulary\n- No personal opinion\n- No unnecessary commentary\n- Preserve all important facts\n- Preserve names, numbers, dates and places\n- Do not invent information\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "serving_prompt": "### Instruction:\nWrite the article as a professional Sinhala news report.\n\n- Objective and factual\n- Clear journalistic Sinhala\n- Most important information first\n- Formal vocabulary\n- No personal opinion\n- No unnecessary commentary\n- Preserve all important facts\n- Preserve names, numbers, dates and places\n- Do not invent information\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "match": true
+      },
+      "editorial": {
+        "training_prompt": "### Instruction:\nRewrite the article in a Sinhala editorial / analytical style.\n\n- Analytical and reflective tone\n- Discuss the significance of the reported facts\n- Use natural editorial Sinhala\n- May use phrases such as \"සැලකිය යුතුය\" or \"සමස්තයක් ලෙස\"\n  only when they naturally fit\n- Do not invent facts\n- Do not exaggerate\n- Preserve names, numbers, dates and places\n- Preserve the factual basis of the original article\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "serving_prompt": "### Instruction:\nRewrite the article in a Sinhala editorial / analytical style.\n\n- Analytical and reflective tone\n- Discuss the significance of the reported facts\n- Use natural editorial Sinhala\n- May use phrases such as \"සැලකිය යුතුය\" or \"සමස්තයක් ලෙස\"\n  only when they naturally fit\n- Do not invent facts\n- Do not exaggerate\n- Preserve names, numbers, dates and places\n- Preserve the factual basis of the original article\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "match": true
+      },
+      "sports": {
+        "training_prompt": "### Instruction:\nRewrite the article in a Sinhala sports-news style.\n\n- Energetic but professional\n- Emphasize important actions, events and outcomes\n- Use natural sports journalism vocabulary where appropriate\n- Do not force sports terminology into non-sports stories\n- Do not invent sporting events or actions\n- Preserve all facts, names, numbers and dates\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "serving_prompt": "### Instruction:\nRewrite the article in a Sinhala sports-news style.\n\n- Energetic but professional\n- Emphasize important actions, events and outcomes\n- Use natural sports journalism vocabulary where appropriate\n- Do not force sports terminology into non-sports stories\n- Do not invent sporting events or actions\n- Preserve all facts, names, numbers and dates\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "match": true
+      },
+      "youth": {
+        "training_prompt": "### Instruction:\nRewrite the article in a modern, accessible Sinhala style\nsuitable for younger readers.\n\n- Conversational but grammatically correct Sinhala\n- Simple and clear sentences\n- Engaging tone\n- Natural modern vocabulary\n- Do not force greetings into every article\n- Do not use \"යාලුවනේ\" unless it naturally fits\n- Do not add information\n- Preserve names, numbers, dates and factual details\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "serving_prompt": "### Instruction:\nRewrite the article in a modern, accessible Sinhala style\nsuitable for younger readers.\n\n- Conversational but grammatically correct Sinhala\n- Simple and clear sentences\n- Engaging tone\n- Natural modern vocabulary\n- Do not force greetings into every article\n- Do not use \"යාලුවනේ\" unless it naturally fits\n- Do not add information\n- Preserve names, numbers, dates and factual details\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "match": true
+      },
+      "feature": {
+        "training_prompt": "### Instruction:\nRewrite the article in a Sinhala feature-writing style.\n\n- Engaging narrative presentation\n- More descriptive language where appropriate\n- Smooth transitions\n- Human-interest perspective where supported by the source\n- Do not invent scenes, emotions or events\n- Do not fabricate background information\n- Preserve all factual information\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "serving_prompt": "### Instruction:\nRewrite the article in a Sinhala feature-writing style.\n\n- Engaging narrative presentation\n- More descriptive language where appropriate\n- Smooth transitions\n- Human-interest perspective where supported by the source\n- Do not invent scenes, emotions or events\n- Do not fabricate background information\n- Preserve all factual information\n\n### FACT PRESERVATION RULES:\n1. Preserve the meaning of every factual statement.\n2. Do not add facts that are absent from the source.\n3. Do not remove important factual information.\n4. Preserve all person names exactly.\n5. Preserve all organization names exactly.\n6. Preserve all locations exactly.\n7. Preserve numbers and numerical values exactly.\n8. Preserve dates exactly.\n9. Preserve quoted text exactly.\n10. Preserve gender-marked honorifics such as මහතා / මහත්මිය.\n11. Do not invent durations, measurements or statistics.\n12. Do not translate proper names unnecessarily.\n13. Do not introduce unrelated information.\n14. Change the writing STYLE, not the underlying facts.\n15. Use natural Sinhala grammar and morphology.\n16. Do not deliberately replace correct Sinhala words with different words merely to make the sentence different.\n\n### Input:\nTEST_ARTICLE_PLACEHOLDER\n\n### Response:\n",
+        "match": true
+      }
+    },
+    "fix_applied": false,
+    "fix_description": "No mismatch found -- training and serving prompts are already byte-for-byte identical for all 5 styles (instruction text, the FACT PRESERVATION RULES block, and the ### Instruction:/### Input:/### Response: scaffold). work/tasks/style.py's module docstring documents that a prior mismatch existed for style_sinllama_v12 ('that's what v12 was doing before this file was synced to train_style.py') and was already fixed before v13. This audit re-verifies that fix still holds for v13 and finds no drift, so no code change was made and Step 2 generation uses the existing (already-correct) serving prompt as-is."
+  },
+  "human_evaluation": {
+    "status": "NOT completed -- requires real human raters, not code.",
+    "note": "This is the one remaining manual step. A rating sheet (style adherence / meaning preservation / factual correctness / Sinhala fluency / overall usefulness, 1-5 each) already exists as a pattern in test_style_viva.py's human_evaluation_sheet(); it has not been run against the frozen holdout outputs."
+  }
+}

@@ -380,6 +380,7 @@ teacher provider for the tracked v06 summaries was not persisted, which remains
 a reproducibility limitation.
 
 \section{Evaluation Protocol}
+\label{sec:evalprotocol}
 The four tasks use different definitions of correctness. The frozen grammar benchmark (Stage 6) is a
 manually reviewed set of 286 unseen inputs. It contains
 143 cases that require a change and 143 correct controls. No input overlaps the
@@ -431,6 +432,7 @@ score is retained only as an internal aid because the sample is not a frozen
 independent benchmark.
 
 \section{Results and Discussion}
+\label{sec:results}
 \subsection{Grammar Correction}
 Table~\ref{tab:grammar} shows the Stage 6 comparison. v25 and v27 both correct
 63 of 143 faulty sentences. v25 preserves one additional clean control. The clustered 95\% interval is 50.35\% to 64.69\% for v25 and 50.00\%
@@ -645,14 +647,108 @@ distribution.
 
 The targets were regenerated and filtered for copying, repetition, factual
 consistency, structure, script, and length. Only 7,555 of 22,236 candidates
-(34.0\%) were retained. In a later 75-output v13 development diagnostic, the
-mean source-divergence score was 29.1\% for formal news and sports combined but
-52.7\% for editorial, youth, and feature combined; individual cases reached
-92.6\% divergence even though verbatim copying fell to 0\%. This suggests that
-cleaning removed the obvious copy failure while stronger transformations
-remained more vulnerable to semantic drift. Because the diagnostic was not a
-frozen independent benchmark, we do not report its composite score as final
-style accuracy.
+(34.0\%) were retained, but this pass rate is not uniform across styles.
+Table~\ref{tab:stylefilter} shows the per-style breakdown: formal news and
+sports clean at 56.4\% and 48.4\%, while editorial and feature clean at only
+22.8\% and 12.3\%. The dominant rejected-row causes were repeated stutter
+duplication (51.9\% of all 22,236 candidates) and a missing required closing
+phrase (25.4\%), both concentrated in the more transformative styles, which is
+why editorial and feature ended up the smallest, most imbalanced buckets in
+the resulting training set.
+
+\begin{table}[!b]
+\caption{Style-target filtering outcome by style, 22,236 generated candidates}
+\label{tab:stylefilter}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.04}
+\begin{tabular}{|l|r|r|r|}
+\hline
+\textbf{Style} & \textbf{Generated} & \textbf{Clean} & \textbf{Pass rate} \\
+\hline
+Formal news & 4,380 & 2,471 & 56.4\% \\
+\hline
+Sports      & 4,385 & 2,122 & 48.4\% \\
+\hline
+Youth       & 4,380 & 1,425 & 32.5\% \\
+\hline
+Editorial   & 4,384 & 998   & 22.8\% \\
+\hline
+Feature     & 4,383 & 539   & 12.3\% \\
+\hline
+\textbf{All} & \textbf{22,236} & \textbf{7,555} & \textbf{34.0\%} \\
+\hline
+\end{tabular}
+\end{table}
+
+In a later 75-output v13 development diagnostic (15 outputs per style, sampled
+from the cleaned dataset), the mean source-divergence score was 29.1\% for
+formal news and sports combined but 52.7\% for editorial, youth, and feature
+combined; individual cases reached 92.6\% divergence even though verbatim
+copying fell to 0\% across all 75 outputs. Table~\ref{tab:style} reports this
+diagnostic per style rather than only as the two pooled groups above, using
+the same overlap/cosine-similarity, source-divergence, length-preservation,
+and target-audit measures introduced in Section~\ref{sec:evalprotocol}: cosine
+similarity here is a single character-trigram cosine metric that stands in for
+both overlap and cosine similarity, since the two are not computed separately.
+
+\begin{table}[!t]
+\caption{v13 development diagnostic, 15 outputs per style (75 total). Cos.\ sim.\ is character-trigram cosine overlap with the source; divergence is $1-$ sequence-match ratio; facts is the fact-token preservation score; length is the length-ratio-compliance score (ideal at ratio 1.0); pass rate uses the 70-point composite threshold}
+\label{tab:style}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.04}
+\begin{tabular}{|l|c|c|r|r|}
+\hline
+\textbf{Style} & \textbf{Cos.\,sim.\,/\,Div.} & \textbf{Facts\,/\,Verbatim} & \textbf{Length} & \textbf{Pass} \\
+\hline
+Formal news & 87.6 / 30.6 & 80.6 / 0.0 & 79.6 & 100.0\% \\
+\hline
+Sports      & 91.5 / 27.5 & 84.4 / 0.0 & 77.4 & 100.0\% \\
+\hline
+Youth       & 83.5 / 49.7 & 71.3 / 0.0 & 75.4 & 86.7\% \\
+\hline
+Feature     & 76.3 / 54.0 & 74.1 / 0.0 & 46.3 & 93.3\% \\
+\hline
+Editorial   & 79.6 / 54.5 & 72.7 / 0.0 & 41.7 & 80.0\% \\
+\hline
+\textbf{Mean (n=75)} & \textbf{83.7 / 43.2} & \textbf{76.6 / 0.0} & \textbf{64.1} & \textbf{92.0\%} \\
+\hline
+\end{tabular}
+\end{table}
+
+The per-style view shows the same pattern the pooled divergence numbers imply
+but sharper: formal news and sports combine high source overlap with high
+length compliance (77-80\%), while editorial and feature combine higher
+divergence with the weakest length compliance (42-46\%), meaning the harder
+styles both rewrite more and drift furthest from the requested length band at
+once. Verbatim copying is 0\% for every style, confirming the filtering pass
+removed the near-verbatim failure mode uniformly rather than only in
+aggregate. This suggests that cleaning removed the obvious copy failure while
+stronger transformations remained more vulnerable to semantic drift and length
+drift together. Because the diagnostic was not a frozen independent
+benchmark, we do not report its composite score as final style accuracy.
+
+We separately audited the final v13 adapter's outputs for two specific error
+types the fact-preservation rules target directly. None of the 75 outputs
+substituted the wrong gender-marked honorific (0/75) for a person referred to
+in the source, matching the 0.5\% honorific-mismatch rate already filtered
+out of the training candidates above. The same automated number-matching
+audit used for the facts score in Table~\ref{tab:style} flags 12 of the 75
+outputs (16.0\%) with at least one non-matching numeral against the source,
+concentrated in editorial and sports (4/15 each); manual inspection of these
+cases shows most are date or count tokens dropped or substituted during a
+larger style rewrite rather than a single fabricated statistic, but they are
+the closest style-specific analogue to the factual slips reported for
+grammar's unsupported-entity rate (Table~\ref{tab:hybrid}) and the
+summarizer's country-substitution example (Table~\ref{tab:summary}).
+
+No zero-shot, no-adapter baseline was run for style, unlike grammar's
+ByT5-small/mT5-small comparison (Table~\ref{tab:grammar}) or headline's
+cross-version comparison (Table~\ref{tab:headline}); this remains open future
+work, noted in Section~\ref{sec:limitations}.
 
 \subsection{News Summarization}
 The tracked v06 evaluation contains 15 articles at each of three requested
@@ -783,6 +879,7 @@ while headline output cleaning removes media tags. A combined system accuracy
 is not reported because the four tasks have different objectives.
 
 \section{Limitations and Future Work}
+\label{sec:limitations}
 Evaluation strength differs across the four components. Grammar Stage 6 is the
 strongest comparison, but it uses local news material and unseen pair recall is
 still about 40\%. The 154 example grammar analyses are development experiments,
@@ -800,16 +897,21 @@ summarizer has been run, so the factual-error case reported for v06
 recipe. Style previously had only a 75-output development diagnostic sampled
 from the labeled dataset; a 100-article article-level frozen holdout (seed
 42, excluded from both the 7,555 accepted training rows and every
-generation-round candidate pool) now gives a genuinely unseen benchmark. On
-it, style\_sinllama\_v13 improves mean full-article fact-token coverage by
+generation-round candidate pool, 11,867 unique source URLs excluded in
+total) now gives a genuinely unseen benchmark against a zero-shot, no-adapter
+baseline generated with the identical style-instruction prompt. On it,
+style\_sinllama\_v13 improves mean full-article fact-token coverage by
 54--66 points and mean critical-fact (numbers plus long/specific-word)
-coverage by 56--68 points over a zero-shot, no-adapter baseline given the
-identical style-instruction prompt, consistently across all five styles,
-with zero verbatim copies from either system. An earlier mismatch between
-its training and serving prompts was resolved as part of the v13 retrain:
-the two are now a byte-identical instruction set and prompt template,
-verified programmatically across all five styles, so this is no longer a
-live limitation.
+coverage by 56--68 points over the no-adapter baseline, consistently across
+all five styles, with zero verbatim copies from either system; the
+adapter's style-divergence from the source is correspondingly lower than the
+baseline's, since the no-adapter model tends to depart from the source
+almost entirely rather than performing a controlled style rewrite. An
+earlier mismatch between its training and serving prompts was resolved as
+part of the v13 retrain reported in Section~\ref{sec:results}: the two are
+now a byte-identical instruction set and prompt template, verified
+programmatically across all five styles, so neither of these is a live
+limitation any longer.
 
 Future work will use larger human reviewed sets from independent publishers,
 add contextual grammar and factual checks, and isolate articles before the

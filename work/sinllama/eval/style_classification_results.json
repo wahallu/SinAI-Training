@@ -1,0 +1,106 @@
+{
+  "method": "Lightweight, LLM-free character-trigram cosine-similarity classifier (reusing test_style_viva.py's char_ngrams()/cosine_similarity_counter(), the same function behind Step 3's content_similarity metric). Reference profiles built from 25 real human-accepted training examples per style (style_rewriter/data/test_words_fixed.jsonl, seed=42 sample, disjoint from the frozen holdout). Each output is classified by nearest cosine similarity to the 5 reference profiles. Replaces two rejected zero-shot LLM approaches (see 'superseded_approaches' below) that were tested on 10-16 real examples each and found non-discriminating or non-answering before being abandoned -- not run at full scale and reported anyway.",
+  "reference_example_counts_per_style": {
+    "youth": 25,
+    "editorial": 25,
+    "formal": 25,
+    "sports": 25,
+    "feature": 25
+  },
+  "superseded_approaches": [
+    {
+      "approach": "Zero-shot classification, plain SinLLaMA-merged-base (no adapter)",
+      "outcome": "REJECTED -- 83-87% of 1000 completions ignored the instruction and continued generating article text instead of answering."
+    },
+    {
+      "approach": "Zero-shot classification, style_sinllama_v13 ADAPTER attached, non-rewrite-shaped prompt",
+      "outcome": "REJECTED after a 15-example pretest (3/5 styles represented, all 5 tested) -- 13/15 produced a parseable label, but only 3/15 (20%) were correct, statistically indistinguishable from random guessing among 5 classes. The adapter (fine-tuned only for rewriting) does not discriminate style from content when repurposed as a classifier; it defaults toward 'FORMAL' or echoes the label list regardless of the input's actual style."
+    }
+  ],
+  "limitations": "This is a coarse, surface-level (character n-gram) similarity proxy, not a validated style classifier, and has not been checked against human judgments. Reference profiles for the smallest-represented style (feature, 539 total training rows) are the noisiest. Treat these accuracy numbers as a weak, disclosed signal for relative comparison (adapter vs baseline), not as ground truth about style quality.",
+  "labels": [
+    "FORMAL",
+    "EDITORIAL",
+    "SPORTS",
+    "YOUTH",
+    "FEATURE"
+  ],
+  "adapter": {
+    "accuracy": 65.4,
+    "precision": 72.17,
+    "recall": 65.4,
+    "f1": 66.19,
+    "per_style": {
+      "FORMAL": {
+        "precision": 49.12,
+        "recall": 84.0,
+        "f1": 61.99,
+        "support": 100
+      },
+      "EDITORIAL": {
+        "precision": 100.0,
+        "recall": 58.0,
+        "f1": 73.42,
+        "support": 100
+      },
+      "SPORTS": {
+        "precision": 47.01,
+        "recall": 55.0,
+        "f1": 50.69,
+        "support": 100
+      },
+      "YOUTH": {
+        "precision": 100.0,
+        "recall": 86.0,
+        "f1": 92.47,
+        "support": 100
+      },
+      "FEATURE": {
+        "precision": 64.71,
+        "recall": 44.0,
+        "f1": 52.38,
+        "support": 100
+      }
+    },
+    "n": 500
+  },
+  "baseline": {
+    "accuracy": 23.8,
+    "precision": 25.33,
+    "recall": 23.8,
+    "f1": 22.0,
+    "per_style": {
+      "FORMAL": {
+        "precision": 20.25,
+        "recall": 33.0,
+        "f1": 25.1,
+        "support": 100
+      },
+      "EDITORIAL": {
+        "precision": 34.29,
+        "recall": 12.0,
+        "f1": 17.78,
+        "support": 100
+      },
+      "SPORTS": {
+        "precision": 25.54,
+        "recall": 47.0,
+        "f1": 33.1,
+        "support": 100
+      },
+      "YOUTH": {
+        "precision": 26.0,
+        "recall": 13.0,
+        "f1": 17.33,
+        "support": 100
+      },
+      "FEATURE": {
+        "precision": 20.59,
+        "recall": 14.0,
+        "f1": 16.67,
+        "support": 100
+      }
+    },
+    "n": 500
+  }
+}

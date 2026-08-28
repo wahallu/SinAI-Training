@@ -1,0 +1,46 @@
+=== Frozen holdout GENERATION run starting ===
+Loaded 100 frozen holdout articles (seed=42)
+Resuming: 0 (system,style,article_id) records already checkpointed
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+Tokenizer loaded
+`torch_dtype` is deprecated! Use `dtype` instead!
+Base model loaded (no adapter)
+[no_adapter/formal] generating 100 (of 100) articles
+[no_adapter/formal] batch 1/17 (6/100) took 82.9s
+[no_adapter/formal] batch 2/17 (12/100) took 82.0s
+[no_adapter/formal] batch 3/17 (18/100) took 82.1s
+[no_adapter/formal] batch 4/17 (24/100) took 82.3s
+[no_adapter/formal] batch 5/17 (30/100) took 82.4s
+[no_adapter/formal] batch 6/17 (36/100) took 82.6s
+[no_adapter/formal] batch 7/17 (42/100) took 82.4s
+[no_adapter/formal] batch 8/17 (48/100) took 82.5s
+[no_adapter/formal] batch 9/17 (54/100) took 82.7s
+[no_adapter/formal] batch 10/17 (60/100) took 82.8s
+[no_adapter/formal] batch 11/17 (66/100) took 83.4s
+[no_adapter/formal] batch 12/17 (72/100) took 82.7s
+[no_adapter/formal] batch 13/17 (78/100) took 83.2s
+[no_adapter/formal] batch 14/17 (84/100) took 83.1s
+[no_adapter/formal] batch 15/17 (90/100) took 83.4s
+[no_adapter/formal] batch 16/17 (96/100) took 83.6s
+[no_adapter/formal] batch 17/17 (100/100) took 81.7s
+[no_adapter/formal] style done in 1405.8s
+[no_adapter/editorial] generating 100 (of 100) articles
+[no_adapter/editorial] batch 1/17 (6/100) took 82.3s
+[no_adapter/editorial] batch 2/17 (12/100) took 82.3s
+[no_adapter/editorial] batch 3/17 (18/100) took 82.3s
+[no_adapter/editorial] batch 4/17 (24/100) took 82.6s
+[no_adapter/editorial] batch 5/17 (30/100) took 82.6s
+[no_adapter/editorial] batch 6/17 (36/100) took 82.7s
+[no_adapter/editorial] batch 7/17 (42/100) took 82.7s
+[no_adapter/editorial] batch 8/17 (48/100) took 82.8s
+[no_adapter/editorial] batch 9/17 (54/100) took 83.1s
+[no_adapter/editorial] batch 10/17 (60/100) took 82.9s
+[no_adapter/editorial] batch 11/17 (66/100) took 83.7s
+[no_adapter/editorial] batch 12/17 (72/100) took 83.1s
+[no_adapter/editorial] batch 13/17 (78/100) took 83.5s
+[no_adapter/editorial] batch 14/17 (84/100) took 83.3s
+[no_adapter/editorial] batch 15/17 (90/100) took 83.7s
+[no_adapter/editorial] batch 16/17 (96/100) took 83.8s
+[no_adapter/editorial] batch 17/17 (100/100) took 81.8s
+[no_adapter/editorial] style done in 1409.2s
+[no_adapter/sports] generating 100 (of 100) articles

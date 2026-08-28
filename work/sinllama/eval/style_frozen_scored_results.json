@@ -1,0 +1,157 @@
+{
+  "holdout_size": 100,
+  "sampling_seed": 42,
+  "scoring_method_note": "Reuses work/sinllama/scripts/test_style_viva.py's existing scoring functions (score_numbers, score_content_similarity, score_length, score_style_divergence, score_style_signals, score_fact_tokens) unmodified. critical_fact_preservation is an explicit, disclosed adaptation (numbers + long-token coverage, built from the module's own extract_numbers()/tokenize_sinhala()/STOP_WORDS primitives) since the module's only per-article 'critical facts' concept (VIVA_FACTS/CRITICAL_FACTS) is hand-authored for one fixed viva article and cannot mechanically scale to 100 new articles. See this script's module docstring for full detail.",
+  "per_style_results": {
+    "formal": {
+      "adapter": {
+        "critical_fact_preservation": 85.36,
+        "full_fact_preservation": 84.09,
+        "number_preservation": 94.26,
+        "content_similarity": 91.08,
+        "length_score": 86.71,
+        "style_divergence": 26.38,
+        "diagnostic_style_signal_score": 19.86,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      },
+      "no_adapter_baseline": {
+        "critical_fact_preservation": 17.5,
+        "full_fact_preservation": 17.83,
+        "number_preservation": 31.02,
+        "content_similarity": 32.51,
+        "length_score": 3.92,
+        "style_divergence": 94.44,
+        "diagnostic_style_signal_score": 24.86,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      }
+    },
+    "editorial": {
+      "adapter": {
+        "critical_fact_preservation": 74.91,
+        "full_fact_preservation": 74.46,
+        "number_preservation": 90.61,
+        "content_similarity": 82.57,
+        "length_score": 52.05,
+        "style_divergence": 47.32,
+        "diagnostic_style_signal_score": 23.33,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      },
+      "no_adapter_baseline": {
+        "critical_fact_preservation": 16.69,
+        "full_fact_preservation": 17.91,
+        "number_preservation": 30.42,
+        "content_similarity": 29.58,
+        "length_score": 2.12,
+        "style_divergence": 94.59,
+        "diagnostic_style_signal_score": 6.0,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      }
+    },
+    "sports": {
+      "adapter": {
+        "critical_fact_preservation": 83.47,
+        "full_fact_preservation": 82.92,
+        "number_preservation": 93.16,
+        "content_similarity": 90.53,
+        "length_score": 78.21,
+        "style_divergence": 31.37,
+        "diagnostic_style_signal_score": 7.0,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      },
+      "no_adapter_baseline": {
+        "critical_fact_preservation": 18.05,
+        "full_fact_preservation": 19.12,
+        "number_preservation": 28.29,
+        "content_similarity": 32.86,
+        "length_score": 3.24,
+        "style_divergence": 94.6,
+        "diagnostic_style_signal_score": 8.14,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      }
+    },
+    "youth": {
+      "adapter": {
+        "critical_fact_preservation": 76.29,
+        "full_fact_preservation": 73.89,
+        "number_preservation": 94.51,
+        "content_similarity": 82.35,
+        "length_score": 75.49,
+        "style_divergence": 41.67,
+        "diagnostic_style_signal_score": 18.0,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      },
+      "no_adapter_baseline": {
+        "critical_fact_preservation": 17.24,
+        "full_fact_preservation": 17.98,
+        "number_preservation": 29.22,
+        "content_similarity": 31.46,
+        "length_score": 3.91,
+        "style_divergence": 94.52,
+        "diagnostic_style_signal_score": 19.17,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      }
+    },
+    "feature": {
+      "adapter": {
+        "critical_fact_preservation": 73.48,
+        "full_fact_preservation": 72.83,
+        "number_preservation": 91.9,
+        "content_similarity": 81.19,
+        "length_score": 47.5,
+        "style_divergence": 53.87,
+        "diagnostic_style_signal_score": 3.57,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      },
+      "no_adapter_baseline": {
+        "critical_fact_preservation": 17.77,
+        "full_fact_preservation": 18.99,
+        "number_preservation": 27.62,
+        "content_similarity": 33.99,
+        "length_score": 3.21,
+        "style_divergence": 94.89,
+        "diagnostic_style_signal_score": 4.29,
+        "verbatim_copy_rate_pct": 0.0,
+        "n": 100
+      }
+    }
+  },
+  "baseline_beats_adapter_anomalies": [
+    {
+      "style": "formal",
+      "metric": "diagnostic_style_signal_score",
+      "adapter": 19.86,
+      "baseline": 24.86,
+      "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+    },
+    {
+      "style": "sports",
+      "metric": "diagnostic_style_signal_score",
+      "adapter": 7.0,
+      "baseline": 8.14,
+      "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+    },
+    {
+      "style": "youth",
+      "metric": "diagnostic_style_signal_score",
+      "adapter": 18.0,
+      "baseline": 19.17,
+      "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+    },
+    {
+      "style": "feature",
+      "metric": "diagnostic_style_signal_score",
+      "adapter": 3.57,
+      "baseline": 4.29,
+      "note": "baseline scores HIGHER than adapter -- flagged for manual review"
+    }
+  ]
+}

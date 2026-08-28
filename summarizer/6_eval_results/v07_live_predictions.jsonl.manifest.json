@@ -1,0 +1,65 @@
+{
+  "created_at_utc": "2026-08-28T11:52:25.510106Z",
+  "condition": "summarization_sinllama_v07_live_on_frozen_eval_subset",
+  "known_contamination": {
+    "source": "SUMMARIZATION_NEXT_STEPS.md section 4 (8_audit_split_contamination.py)",
+    "frozen_eval_subset_contamination_pct": 82.67,
+    "frozen_test_contamination_pct": 80.8,
+    "caveat": "This adapter was trained before the frozen split existed. ~82.67% of the 300-article eval subset scored here was already in this adapter's own training data. High scores reflect memorization, not generalization. See summarization_sinllama_v07_frozensplit for the leakage-free comparison."
+  },
+  "adapter_requested": "/home/jovyan/work/sinllama/models/adapters/summarization_sinllama_v07",
+  "base_model_requested": "/home/jovyan/work/sinllama/models/SinLLaMA-merged-base",
+  "input_path": "/home/jovyan/summarizer/data/summarization_frozen_eval_subset.jsonl",
+  "input_sha256": "dc927b32018e02bec6910442df8a882d816842cfb634ecc282d55c7b6cdb6c43",
+  "output_path": "/home/jovyan/summarizer/6_eval_results/v07_live_predictions.jsonl",
+  "output_sha256": "18933b5c3b4f08e95cff6e88960cb6d4650ad7c7ec5374d2d14ab4bc4514142f",
+  "rows": 819,
+  "generated_rows_this_run": 819,
+  "generation_config": {
+    "do_sample": false,
+    "num_beams": 1,
+    "repetition_penalty": 1.15,
+    "bucket_token_budgets": {
+      "short": 80,
+      "medium": 130,
+      "long": 200
+    }
+  },
+  "summary": {
+    "short": {
+      "n": 273,
+      "rougeL": 0.4719439560439561,
+      "rouge1": 0.6583666666666665,
+      "rouge2": 0.42562380952380974,
+      "mean_ratio": 0.12183846153846153,
+      "in_band_pct": 72.52747252747253,
+      "clean_end_pct": 97.06959706959707,
+      "glue_pct": 0.0,
+      "unit_mismatch_pct": 0.0
+    },
+    "medium": {
+      "n": 273,
+      "rougeL": 0.4433395604395606,
+      "rouge1": 0.6834256410256422,
+      "rouge2": 0.43475750915750905,
+      "mean_ratio": 0.20033553113553118,
+      "in_band_pct": 59.34065934065934,
+      "clean_end_pct": 95.23809523809523,
+      "glue_pct": 0.0,
+      "unit_mismatch_pct": 0.3663003663003663
+    },
+    "long": {
+      "n": 273,
+      "rougeL": 0.4200597069597073,
+      "rouge1": 0.6888402930402936,
+      "rouge2": 0.4497871794871796,
+      "mean_ratio": 0.32116923076923093,
+      "in_band_pct": 60.07326007326007,
+      "clean_end_pct": 93.77289377289377,
+      "glue_pct": 0.0,
+      "unit_mismatch_pct": 0.3663003663003663
+    }
+  },
+  "wall_seconds_this_run": 5884.001,
+  "peak_gpu_memory_bytes": 7656702976
+}

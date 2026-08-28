@@ -1,0 +1,175 @@
+=== Style classification run starting ===
+1000 total items to classify, 0 already checkpointed
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+Tokenizer loaded
+`torch_dtype` is deprecated! Use `dtype` instead!
+Base model loaded (zero-shot classifier, no adapter)
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+batch 1/84 (12/1000) took 3.5s
+batch 2/84 (24/1000) took 2.8s
+batch 3/84 (36/1000) took 2.0s
+batch 4/84 (48/1000) took 2.0s
+batch 5/84 (60/1000) took 2.0s
+batch 6/84 (72/1000) took 2.1s
+batch 7/84 (84/1000) took 2.1s
+batch 8/84 (96/1000) took 2.2s
+batch 9/84 (108/1000) took 2.3s
+batch 10/84 (120/1000) took 2.0s
+batch 11/84 (132/1000) took 2.0s
+batch 12/84 (144/1000) took 2.1s
+batch 13/84 (156/1000) took 2.2s
+batch 14/84 (168/1000) took 2.1s
+batch 15/84 (180/1000) took 2.1s
+batch 16/84 (192/1000) took 2.3s
+batch 17/84 (204/1000) took 2.3s
+batch 18/84 (216/1000) took 2.0s
+batch 19/84 (228/1000) took 1.9s
+batch 20/84 (240/1000) took 2.0s
+batch 21/84 (252/1000) took 2.0s
+batch 22/84 (264/1000) took 2.1s
+batch 23/84 (276/1000) took 2.1s
+batch 24/84 (288/1000) took 2.2s
+batch 25/84 (300/1000) took 2.3s
+batch 26/84 (312/1000) took 1.9s
+batch 27/84 (324/1000) took 1.9s
+batch 28/84 (336/1000) took 2.0s
+batch 29/84 (348/1000) took 2.0s
+batch 30/84 (360/1000) took 2.6s
+batch 31/84 (372/1000) took 2.1s
+batch 32/84 (384/1000) took 2.1s
+batch 33/84 (396/1000) took 2.2s
+batch 34/84 (408/1000) took 2.3s
+batch 35/84 (420/1000) took 2.1s
+batch 36/84 (432/1000) took 2.1s
+batch 37/84 (444/1000) took 2.2s
+batch 38/84 (456/1000) took 2.2s
+batch 39/84 (468/1000) took 2.1s
+batch 40/84 (480/1000) took 2.2s
+batch 41/84 (492/1000) took 2.3s
+batch 42/84 (504/1000) took 2.6s
+batch 43/84 (516/1000) took 2.6s
+batch 44/84 (528/1000) took 2.6s
+batch 45/84 (540/1000) took 2.6s
+batch 46/84 (552/1000) took 2.6s
+batch 47/84 (564/1000) took 2.6s
+batch 48/84 (576/1000) took 2.6s
+batch 49/84 (588/1000) took 2.6s
+batch 50/84 (600/1000) took 2.6s
+batch 51/84 (612/1000) took 2.6s
+batch 52/84 (624/1000) took 2.6s
+batch 53/84 (636/1000) took 2.6s
+batch 54/84 (648/1000) took 2.6s
+batch 55/84 (660/1000) took 2.6s
+batch 56/84 (672/1000) took 2.6s
+batch 57/84 (684/1000) took 2.6s
+batch 58/84 (696/1000) took 2.6s
+batch 59/84 (708/1000) took 2.6s
+batch 60/84 (720/1000) took 2.6s
+batch 61/84 (732/1000) took 2.6s
+batch 62/84 (744/1000) took 2.6s
+batch 63/84 (756/1000) took 2.6s
+batch 64/84 (768/1000) took 2.6s
+batch 65/84 (780/1000) took 2.6s
+batch 66/84 (792/1000) took 2.6s
+batch 67/84 (804/1000) took 2.6s
+batch 68/84 (816/1000) took 2.6s
+batch 69/84 (828/1000) took 2.6s
+batch 70/84 (840/1000) took 2.6s
+batch 71/84 (852/1000) took 2.6s
+batch 72/84 (864/1000) took 2.6s
+batch 73/84 (876/1000) took 2.6s
+batch 74/84 (888/1000) took 2.6s
+batch 75/84 (900/1000) took 2.6s
+batch 76/84 (912/1000) took 2.6s
+batch 77/84 (924/1000) took 2.6s
+batch 78/84 (936/1000) took 2.6s
+batch 79/84 (948/1000) took 2.6s
+batch 80/84 (960/1000) took 2.6s
+batch 81/84 (972/1000) took 2.6s
+batch 82/84 (984/1000) took 2.6s
+batch 83/84 (996/1000) took 2.6s
+batch 84/84 (1000/1000) took 1.8s
+Saved /home/jovyan/work/sinllama/eval/style_classification_results.json
+{
+  "adapter": {
+    "accuracy": 3.8,
+    "precision": 4.52,
+    "recall": 3.8,
+    "f1": 4.13,
+    "per_style": {
+      "FORMAL": {
+        "precision": 22.62,
+        "recall": 19.0,
+        "f1": 20.65,
+        "support": 100
+      },
+      "EDITORIAL": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 100
+      },
+      "SPORTS": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 100
+      },
+      "YOUTH": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 100
+      },
+      "FEATURE": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 100
+      }
+    },
+    "n": 500,
+    "unknown_prediction_rate_pct": 82.6
+  },
+  "baseline": {
+    "accuracy": 1.6,
+    "precision": 5.08,
+    "recall": 1.6,
+    "f1": 2.37,
+    "per_style": {
+      "FORMAL": {
+        "precision": 14.29,
+        "recall": 6.0,
+        "f1": 8.45,
+        "support": 100
+      },
+      "EDITORIAL": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 100
+      },
+      "SPORTS": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 100
+      },
+      "YOUTH": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 100
+      },
+      "FEATURE": {
+        "precision": 11.11,
+        "recall": 2.0,
+        "f1": 3.39,
+        "support": 100
+      }
+    },
+    "n": 500,
+    "unknown_prediction_rate_pct": 86.6
+  }
+}
+=== Style classification run COMPLETE ===
