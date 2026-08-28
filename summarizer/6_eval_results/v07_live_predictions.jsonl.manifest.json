@@ -1,5 +1,5 @@
 {
-  "created_at_utc": "2026-08-28T11:52:25.510106Z",
+  "created_at_utc": "2026-08-28T15:58:59.774363Z",
   "condition": "summarization_sinllama_v07_live_on_frozen_eval_subset",
   "known_contamination": {
     "source": "SUMMARIZATION_NEXT_STEPS.md section 4 (8_audit_split_contamination.py)",
@@ -14,7 +14,7 @@
   "output_path": "/home/jovyan/summarizer/6_eval_results/v07_live_predictions.jsonl",
   "output_sha256": "18933b5c3b4f08e95cff6e88960cb6d4650ad7c7ec5374d2d14ab4bc4514142f",
   "rows": 819,
-  "generated_rows_this_run": 819,
+  "generated_rows_this_run": 0,
   "generation_config": {
     "do_sample": false,
     "num_beams": 1,
@@ -60,6 +60,6 @@
       "unit_mismatch_pct": 0.3663003663003663
     }
   },
-  "wall_seconds_this_run": 5884.001,
+  "wall_seconds_this_run": 0.0,
   "peak_gpu_memory_bytes": 7656702976
 }
