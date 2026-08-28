@@ -1,0 +1,745 @@
+\documentclass[a4paper,conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{textcomp}
+\usepackage{url}
+\usepackage{array}
+\usepackage{balance}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+\usetikzlibrary{positioning,arrows.meta,calc}
+
+% ICAC 2026 uses double-blind review. Keep this true for the review submission.
+% Set it to false only for the camera-ready paper after acceptance.
+\newif\ificacblind
+\icacblindtrue
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{SinhalaJournal-LLM: Data-Centric Adaptation of a Sinhala Language Model for Journalism}
+\newcommand{\systemname}{SinhalaJournal-LLM}
+
+\ificacblind
+\author{}
+\else
+\author{
+\centering
+\begin{tabular}{@{}ccc@{}}
+
+\begin{minipage}[t]{0.305\textwidth}\centering
+\textbf{Nisal Fonseka}\\
+\textit{Dept. of Software Engineering}\\
+\textit{Sri Lanka Institute of Information Technology}\\
+Malabe, Sri Lanka\\
+nisalfonseka@gmail.com
+\end{minipage}
+&
+\begin{minipage}[t]{0.305\textwidth}\centering
+\textbf{Chathushka Navod}\\
+\textit{Dept. of Software Engineering}\\
+\textit{Sri Lanka Institute of Information Technology}\\
+Malabe, Sri Lanka\\
+chathushkanavod11@gmail.com
+\end{minipage}
+&
+\begin{minipage}[t]{0.305\textwidth}\centering
+\textbf{Akash Jayasinghe}\\
+\textit{Dept. of Software Engineering}\\
+\textit{Sri Lanka Institute of Information Technology}\\
+Malabe, Sri Lanka\\
+savindu096@gmail.com
+\end{minipage}
+\\
+
+\multicolumn{3}{c}{\rule{0pt}{3.2ex}} \\
+
+\begin{minipage}[t]{0.305\textwidth}\centering
+\textbf{Sandun Hettiarachchi}\\
+\textit{Dept. of Software Engineering}\\
+\textit{Sri Lanka Institute of Information Technology}\\
+Malabe, Sri Lanka\\
+lakshansandun545@gmail.com
+\end{minipage}
+&
+\begin{minipage}[t]{0.305\textwidth}\centering
+\textbf{Nuwan Kodagoda}\\
+\textit{Dept. of Software Engineering}\\
+\textit{Sri Lanka Institute of Information Technology}\\
+Malabe, Sri Lanka\\
+nuwan.k@sliit.lk
+\end{minipage}
+&
+\begin{minipage}[t]{0.305\textwidth}\centering
+\textbf{Poojani Gunathilake}\\
+\textit{Dept. of Software Engineering}\\
+\textit{Sri Lanka Institute of Information Technology}\\
+Malabe, Sri Lanka\\
+poojani.g@sliit.lk
+\end{minipage}
+
+\end{tabular}
+}
+\fi
+
+\maketitle
+
+\begin{abstract}
+Sinhala has limited Natural Language Processing (NLP) support for practical
+newsroom writing. This research presents \systemname, which adapts SinLlama
+for grammar correction, headline generation, news summarization, and style
+rewriting using separate Low-Rank Adaptation (LoRA) adapters. From 1,031,456
+collected Sinhala news articles, quality filtering retained 665,887. On a
+frozen, manually reviewed 286-input grammar benchmark, the v27 adapter achieved
+56.99\% overall exact match and corrected 63 of 143 faulty sentences, compared
+with 12 for ByT5-small and none for mT5-small. A dual-gold rescoring of saved
+v24/v26 predictions shows that the repaired-gold development gap is 57.8\% to
+65.6\%, while the strict 143-case unchanged-gold, identical-input subset
+improves from 61.5\% to 66.4\%, indicating both broader correction gains and
+increased alignment to the repaired convention. In headline generation,
+balancing categories before splitting inflated ROUGE-1 from 0.1382 to 0.2933;
+the final v19 adapter reached ROUGE-1 0.1824 on 100 external-publisher
+articles. A later audit found about 81\% contamination in the legacy
+summarization evaluation, motivating article-level frozen retraining; on 273
+held-out articles, the v06 and v07 recipes were effectively tied across three
+length bands. Style-target generation also showed severe template and copying
+failures, with only 7,555 of 22,236 candidates retained after quality
+filtering. Overall, dataset construction, contamination control, and evaluation
+design materially change apparent performance in low-resource Sinhala
+generation.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Sinhala NLP, low-resource language, LoRA, journalism NLP, data quality
+\end{IEEEkeywords}
+
+\section{Introduction}
+Large Language Models (LLMs) have improved text generation, but Sinhala still has
+fewer datasets, benchmarks, and systems for specific tasks
+\cite{desilva2019survey,jayakody2024performance}. SinBERT established strong
+Sinhala text classification baselines \cite{dhananjaya2022bertifying}, while
+SinLlama extended Llama 3 with Sinhala vocabulary and continual pretraining
+\cite{grattafiori2024llama3,aravinda2025sinllama}. NSina later provided a large
+Sinhala news corpus and headline generation benchmark
+\cite{hettiarachchi2024nsina}.
+
+Journalism needs several forms of constrained generation. Editors correct
+language, write headlines under length limits, condense reports, and adapt the
+same facts to different editorial styles. Names, numbers, dates, quotations,
+and meaning must survive these operations. Sinhala studies have addressed
+individual tasks such as extractive summarization \cite{jahan2023summarization}
+and rule-based spelling and grammar correction \cite{goonawardena2022grammar}, but adapting one
+Sinhala decoder across these connected newsroom tasks remains less explored.
+
+\systemname{} uses SinLlama as a shared base and trains one LoRA adapter
+\cite{hu2022lora} per task, with 4-bit loading to make repeated adaptation
+practical on limited hardware \cite{dettmers2023qlora}. The study contributes
+four task datasets derived from an original news corpus, adaptation and evaluation for each task, a frozen grammar comparison with ByT5-small and
+mT5-small, a controlled grammar safety policy replay, a quantified case of
+headline split leakage, and Sinhala data quality findings covering
+Unicode handling, summarization decoding, and template collapse in style
+rewriting. Rather than treating each component as an isolated accuracy result,
+we examine how data and evaluation decisions change the apparent quality of a
+low-resource generative system.
+
+\section{Related Work}
+
+\subsection{Sinhala Language Models and Generation Tasks}
+Sinhala NLP has progressed from rule-based processing to pretrained models.
+SinBERT and later Sinhala encoder models improved representation and
+classification \cite{dhananjaya2022bertifying,ranasinghe2025encoder}, but are
+not generative decoders. SinLlama is the closest foundation for this work.
+It extends Llama 3 8B with Sinhala vocabulary and continual pretraining, then
+uses LoRA for downstream classification \cite{aravinda2025sinllama}. Our work
+instead studies constrained generation from the same type of decoder adapted for Sinhala.
+
+NSina contains over 500,000 Sinhala news articles and benchmarks media
+identification, category prediction, and headline generation
+\cite{hettiarachchi2024nsina}. Sinhala summarization work has compared TF-IDF
+and TextRank \cite{jahan2023summarization}, while multilingual sequence to sequence models such as mT5 and XL-Sum support abstractive generation
+\cite{xue2021mt5,hasan2021xlsum}. Existing Sinhala spelling and grammar systems include rule-based and hybrid
+approaches \cite{goonawardena2022grammar}.
+These studies provide useful baselines for individual tasks but do not evaluate the four
+connected editorial operations together.
+
+\subsection{Adaptation and Evaluation of Constrained Generation}
+LoRA freezes the pretrained weights and learns low-rank updates, while QLoRA
+combines adapter training with a quantized base model
+\cite{hu2022lora,dettmers2023qlora}. This makes separate adapters feasible
+without maintaining four full 8B models. Evaluation remains task dependent.
+Style transfer, for example, must balance style change, content preservation,
+and fluency, for which overlap metrics alone are inadequate
+\cite{ostheimer2024tst}. For this reason, each task is evaluated with measures suited to its own objective.
+
+\section{Corpus and Task Datasets}
+Project crawlers and scraping scripts collected 1,031,456 articles directly
+from Sri Lankan Sinhala news sites, spanning 13 March 2008 to 4 March 2026. No
+NSina data were used. Exact duplicates were removed, after which articles were
+accepted only when the body contained between 300 and 10,000 characters, the title
+contained between 10 and 200 characters, and at least 30\% of the characters were Sinhala Unicode. Failed rows
+were discarded rather than truncated. The process removed 365,569 articles
+(35.4\%), leaving 665,887. Local news and Politics were the largest categories,
+with 264,434 and 151,640 articles respectively, followed by International
+(68,005), Business (49,247), Sports (37,336), and Editorial (16,263). The
+remaining 78,962 articles were distributed across Other, Entertainment,
+Crime/Law, Health, Technology, Science, Religion, and Environment. This
+distribution matters for generation experiments because the categories are
+highly uneven. This can make simple category balancing
+appear useful even when it creates the leakage problem demonstrated later.
+
+\subsection{Invisible Character Handling}
+Sinhala scraping exposed two visually similar characters that require different
+treatment. Soft hyphen U+00AD is invisible but disrupts subword tokenization and
+is removed. It appeared in 85.8\% of the rows in one style working file.
+Zero width joiner U+200D participates in valid Sinhala conjuncts and is
+preserved. We also observed encoding artifacts and a Devanagari danda attached
+to surrounding text without whitespace in 480 of 600 inspected rows, which
+broke downstream sentence splitting. The practical finding is that generic
+removal of invisible or control characters can corrupt Sinhala text, so
+normalization must be character aware.
+
+\subsection{Task Datasets}
+None of the tasks uses the full corpus. Each dataset was independently filtered,
+transformed, and audited, as summarized in Table~\ref{tab:datasets}.
+
+\begin{table}[!b]
+\caption{Final task datasets used for adapter development}
+\label{tab:datasets}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.6pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{|p{0.17\columnwidth}|p{0.25\columnwidth}|p{0.45\columnwidth}|}
+\hline
+\textbf{Task} & \textbf{Final data} & \textbf{Main structure} \\
+\hline
+Grammar & 36,006 rows & Incorrect or correct input with corrected target \\
+\hline
+Headline & 43,737 train, about 4,795 validation & Article, category, reference headline \\
+\hline
+Summary & 35,547 articles & Article with short, medium, and long summaries \\
+\hline
+Style & 7,555 rewrites & Article, target style, rewritten article \\
+\hline
+\end{tabular}
+\end{table}
+
+The summary row reports the cleaned v07 dataset. The tracked v06 model was
+trained before the 22-row cleanup on 35,569 articles.
+
+\textit{Grammar.} The final Stage 13 file contains 36,006 rows spanning
+spelling, verb form, agreement, word order, spacing, register, pronouns,
+negation, numerals, and already-correct controls. Stage 12 and Stage 13 contain
+the same 36,006 inputs in the same order, while 4,999 target outputs differ.
+The training data combine manually curated material with controlled
+corpus-derived error construction and preservation cases.
+
+\textit{Headline.} The final v19 training set contains 43,737 rows with short
+(3--5 words), medium (6--7), and long (8--10) target bands. Earlier category
+balancing physically duplicated minority examples before splitting, which
+created the leakage quantified in Section~VI-B. Later target cleaning removes
+media and scraper artifacts.
+
+\textit{Summarization.} The v06 multi-length silver corpus contains 35,569
+articles, each paired with short, medium, and long summaries. A quality audit
+removed 22 rows with word-glue or numeric-unit defects, producing the 35,547-row
+v07 cleaned corpus. The legacy scripts expanded the three length variants
+before splitting, which later proved to contaminate evaluation. A deterministic
+article-level 80/10/10 split was therefore frozen from the raw corpus: 28,455
+training, 3,556 validation, and 3,558 test articles, plus a fixed 300-article
+evaluation subset. Both v06 and v07 recipes were retrained on these boundaries.
+
+\textit{Style rewriting.} The final cleaned dataset contains 7,555 rewrites
+across formal news, editorial, sports, youth, and feature styles. It was
+retained from 22,236 generated candidates after structural, factual, script,
+length, repetition, and copying checks. Earlier target files exhibited severe
+verbatim-copy and template-collapse behavior, motivating regeneration and
+filtering before v13 training.
+
+\section{Model Adaptation and Fine-Tuning}
+
+\subsection{Base Model}
+SinLlama is the common base. We begin from the model already adapted for Sinhala rather than
+repeating its tokenizer extension or continual pretraining
+\cite{aravinda2025sinllama}. The merged checkpoint is loaded in 4-bit NF4 with
+BF16 compute, and each task uses a separate LoRA adapter. Fig.~\ref{fig:modeladaptation}
+summarizes the relationship.
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}[
+    base/.style={draw, rounded corners=2pt, align=center,
+        minimum width=0.70\columnwidth, minimum height=4.6mm,
+        inner sep=1.1pt, font=\footnotesize},
+    adapter/.style={draw, rounded corners=2pt, align=center,
+        minimum width=0.205\columnwidth, minimum height=4.8mm,
+        inner sep=0.8pt, font=\footnotesize},
+    flow/.style={-{Latex[length=1.4mm]}, line width=0.4pt},
+    branchline/.style={line width=0.4pt}
+]
+\node[base] (llama) {Llama 3 8B};
+\node[base, below=1.8mm of llama] (sinllama)
+    {SinLlama\\Sinhala vocabulary extension and continual pretraining};
+\node[base, below=1.8mm of sinllama] (shared)
+    {\systemname{}\\shared SinLlama base};
+
+\node[adapter, below=6.1mm of shared, xshift=-0.36\columnwidth] (grammar)
+    {Grammar\\v27};
+\node[adapter, below=6.1mm of shared, xshift=-0.12\columnwidth] (headline)
+    {Headline\\v19};
+\node[adapter, below=6.1mm of shared, xshift=0.12\columnwidth] (summary)
+    {Summarizer\\v07};
+\node[adapter, below=6.1mm of shared, xshift=0.36\columnwidth] (style)
+    {Style\\v13};
+
+\draw[flow] (llama) -- (sinllama);
+\draw[flow] (sinllama) -- (shared);
+\coordinate (branch) at ($(shared.south)+(0,-2.1mm)$);
+\coordinate (gbranch) at (grammar.north |- branch);
+\coordinate (hbranch) at (headline.north |- branch);
+\coordinate (sbranch) at (summary.north |- branch);
+\coordinate (tbranch) at (style.north |- branch);
+\draw[branchline] (shared.south) -- (branch);
+\draw[branchline] (gbranch) -- (tbranch);
+\draw[flow] (gbranch) -- (grammar.north);
+\draw[flow] (hbranch) -- (headline.north);
+\draw[flow] (sbranch) -- (summary.north);
+\draw[flow] (tbranch) -- (style.north);
+\end{tikzpicture}
+\caption{Model adaptation architecture of \systemname{}.}
+\label{fig:modeladaptation}
+\end{figure}
+
+\subsection{Prompt Design}
+Prompts encode the constraints later evaluated. Grammar instructs the model to
+fix only errors and return correct text unchanged. Headline prompts include
+category and requested word band. Summarization uses instructions for each requested length that restrict content to the source. Style uses a target style
+instruction with factual preservation rules for entities, numbers, dates,
+quotations, honorifics, and unsupported substitutions. We therefore treat the
+prompt as part of the task definition rather than only an interface wrapper.
+
+\subsection{LoRA Configuration}
+All adapters target the same seven attention and MLP projections and use seed
+42 with validation-loss checkpoint selection. Table~\ref{tab:config} records
+the selected configurations. Grammar v27 is a lower-rank, lower-scaling
+configuration ($r=4,\alpha=4$) rather than a pure rank-only ablation. The
+leakage-controlled summarization comparison retrains both the raw v06 and
+cleaned v07 recipes with the same $r=32,\alpha=64$ configuration on frozen
+article-level boundaries.
+
+\begin{table*}[!t]
+\caption{Selected LoRA configurations. All use a 4-bit NF4 SinLlama base with BF16 compute and the same seven target projections.}
+\label{tab:config}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{|l|l|r|c|r|c|c|c|r|}
+\hline
+\textbf{Task} & \textbf{Adapter/recipe} & \textbf{Train data} & \textbf{$r$\,/\,$\alpha$\,/\,dropout} &
+\textbf{Max seq.} & \textbf{Eff. batch} & \textbf{LR} & \textbf{Epochs} & \textbf{Trainable params} \\
+\hline
+Grammar       & v27 & 36,006 rows & 4\,/\,4\,/\,0.05    & 512  & 8  & 5e-5 & 3.00  & 10,485,760 \\
+\hline
+Headline      & v19 & 43,737 rows & 64\,/\,128\,/\,0.08 & 768  & 8  & 5e-5 & 8 (early stop) & 167,772,160 \\
+\hline
+Summarization & v06/v07 frozen & 28,455 articles & 32\,/\,64\,/\,0.05  & 2048 & 16 & 2e-4 & 3 & 83,886,080 \\
+\hline
+Style         & v13 & 7,555 rows  & 24\,/\,48\,/\,0.05  & 4096 & 16 & 1e-4 & 3 & 62,914,560 \\
+\hline
+\end{tabular}
+\end{table*}
+
+\subsection{Inference Configuration}
+Grammar and style use deterministic decoding. Headline generation samples at
+temperature 0.3 and top-$p$ 0.9 with a retry when the first output is too short. Summarization uses
+deterministic decoding and separate token limits for each requested length. An earlier
+\texttt{no\_repeat\_ngram\_size=3} setting was removed after it corrupted
+opening Sinhala grapheme sequences, showing that decoding constraints commonly
+used for other languages are not automatically safe for Sinhala.
+
+\textit{Reproducibility and data use.} Grammar v27 was trained on one NVIDIA
+A40 for 6.36 hours with 44.352 GB peak GPU memory. The frozen summarization
+retraining used the same GPU and persisted split manifests and result files.
+The multi-length silver summaries used by v06/v07 were generated through the
+project's local OpenAI-compatible multi-router gateway using
+\texttt{ollama/gpt-oss:120b}, with quality validation and resume support. The
+corpus came from publicly accessible news pages for academic research, and full
+article text is not redistributed in this manuscript. Repository links are
+omitted for double-blind review.
+
+\section{Evaluation Protocol}
+The four tasks use different definitions of correctness. Grammar Stage 6 is a
+frozen, manually reviewed set of 286 unseen inputs: 143 change-needed cases and
+143 paired correct controls. The changed set contains 55 published natural
+errors, 80 injected unseen-orthography cases, and eight spacing/punctuation
+cases. No normalized input overlaps the final training data or Stage 5, and 87
+changed cases contain exact correction pairs absent from training. We report
+overall exact match, change exact match, clean preservation, edit
+$F_{0.5}$, and unseen-pair recall with document-clustered bootstrap intervals.
+The same Stage 6 inputs are scored for Grammar v25/v27, ByT5-small, and
+mT5-small. The ByT5/mT5 baselines use the frozen Stage 13 source with a
+deterministic rare-pair-disjoint split of 28,519 training and 1,518 development
+cases, with 330 bridge cases excluded; both were trained for three epochs. The
+mT5 safety layer rejected malformed generated candidates, so its applied Stage
+6 score equals the unchanged-input baseline.
+
+The 154-example Stages 2--5 benchmark is developmental. For target-repair
+analysis, saved v24 and v26 predictions are deterministically rescored against
+both pre-repair and repaired gold. Of 154 cases, 145 have unchanged gold and
+nine changed gold; the strictest comparison contains 143 cases with unchanged
+gold and byte-identical model inputs. The same development predictions are
+also used for the grammar validator replay.
+
+Headline evaluation first compares leaked and repaired category splits, then
+evaluates v18--v20 on 300 validation articles at all three requested bands
+(900 outputs per version). Artifacts include prompt/media tags, truncation,
+empty output, or non-target-script contamination. Final v19 is additionally
+evaluated on the same 100 Hiru News articles previously used for v17 transfer
+checking.
+
+For summarization, the legacy sample-level split is audited against a frozen
+article-level split. Both v06 and v07 recipes are then retrained on the same
+frozen train/validation boundaries and evaluated on the same fixed 300-article
+subset; 273 complete articles yield 819 generations per adapter. We report
+ROUGE-1/2/L, requested-band adherence, clean ending, word-glue defects, and
+numeric-unit mismatch. Compression bands are 0.04--0.18 (short), 0.12--0.32
+(medium), and 0.22--0.55 (long).
+
+Style v13 uses a 75-output development diagnostic, 15 items per style. ROUGE is
+measured against reference rewrites and copying is audited against the source.
+Because this is not a frozen independent benchmark and the production prompt
+differs from the training/evaluation prompt, we report it only as development
+evidence rather than final style accuracy.
+
+\section{Results and Discussion}
+\subsection{Grammar Correction}
+Table~\ref{tab:grammar} reports Stage 6. v25 and v27 both correct 63 of 143
+faulty inputs; v25 preserves one additional control. Their clustered 95\%
+intervals overlap substantially, so the one-example aggregate difference does
+not establish superiority. v27 is retained for parameter efficiency: its
+$r=4,\alpha=4$ adapter uses about one eighth of the trainable parameters of the
+rank-32 configurations while remaining statistically comparable on Stage 6.
+
+\begin{table}[!t]
+\caption{Grammar Stage 6 comparison on 286 unseen inputs}
+\label{tab:grammar}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{1.6pt}
+\renewcommand{\arraystretch}{1.04}
+\begin{tabular}{|l|r|r|r|r|}
+\hline
+\textbf{System} & \textbf{Overall} & \textbf{Change} & \textbf{$F_{0.5}$} & \textbf{Unseen} \\
+\hline
+Grammar v27 & 56.99\% & 44.06\% & 45.36\% & 40.23\% \\
+\hline
+Grammar v25 & 57.34\% & 44.06\% & 46.21\% & 41.38\% \\
+\hline
+ByT5-small & 50.00\% & 8.39\% & 20.34\% & 13.79\% \\
+\hline
+mT5-small & 50.00\% & 0.00\% & 0.00\% & 0.00\% \\
+\hline
+\end{tabular}
+\end{table}
+
+The 50\% overall floor is the unchanged-input baseline because half of Stage 6
+contains already-correct controls. ByT5 repairs 12 faulty cases but also damages
+12 controls. mT5's safety-applied outputs exactly reproduce the unchanged
+baseline. Under these evaluated formulations, the adapted SinLlama systems are
+substantially better at making required corrections, although unseen-pair
+recall remains near 40\% and clean preservation near 70\%.
+
+The dual-gold analysis in Table~\ref{tab:gdual} resolves an important
+interpretation issue in the target-repair experiment. Against repaired gold,
+v24 to v26 improves by 7.8 percentage points; against old gold, the difference
+is only 1.9 points. However, on the 145 examples whose gold never changed, v26
+still improves from 60.7\% to 65.5\%. Restricting further to 143 cases that also
+gave both models byte-identical inputs gives 61.5\% versus 66.4\%. Thus the
+improvement is not solely target-convention matching, but the full 7.8-point
+gain cannot be attributed causally to general correction quality alone.
+
+\begin{table}[!t]
+\caption{v24/v26 dual-gold development rescoring}
+\label{tab:gdual}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{tabular}{|l|r|r|r|}
+\hline
+\textbf{Model} & \textbf{Old gold} & \textbf{Repaired gold} & \textbf{Strict 143} \\
+\hline
+v24 & 59.7\% & 57.8\% & 61.5\% \\
+\hline
+v26 & 61.7\% & 65.6\% & 66.4\% \\
+\hline
+\end{tabular}
+\end{table}
+
+The lower-rank, lower-scaling v27 configuration reaches 66.9\% exact match on
+the same development benchmark, with 91\% on taught pairs and 48\% on untaught
+pairs. This supports parameter efficiency, not a pure rank-only causal claim.
+
+The grammar rule validator is evaluated by replaying the same 154 saved v27
+predictions. Rules alone preserve clean text but correct none of the faulty
+examples. A legacy blanket-veto policy suppresses useful neural edits, while a
+recalibrated selective policy restores neural exact match and recall and
+removes the observed unsupported-entity mutation without increasing number
+errors. Because the policy was developed on this set, this is a validator
+ablation rather than an independent benchmark.
+
+\begin{table}[!b]
+\caption{Grammar validator replay on 154 development examples}
+\label{tab:hybrid}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.3pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{tabular}{|l|r|r|r|}
+\hline
+\textbf{System} & \textbf{Exact} & \textbf{Edit recall} & \textbf{Unsup. entity} \\
+\hline
+Neural v27 & 66.88\% & 71.14\% & 0.65\% \\
+\hline
+Rules only & 24.68\% & 0.00\% & 0.00\% \\
+\hline
+Legacy hybrid & 57.14\% & 56.22\% & 0.00\% \\
+\hline
+Recalibrated hybrid & 66.88\% & 71.14\% & 0.00\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Category Balancing Introduced Leakage}
+\label{sec:leak}
+An early headline dataset balanced minority categories by physical duplication
+before the training and validation split. Copies of the same article therefore entered
+both partitions. The leaked evaluation reported ROUGE-1 of 0.2933 and 485 exact
+matches among 6,732 outputs, while the repaired split reported 0.1382 and no
+exact matches among 4,795 outputs.
+
+\begin{table}[!b]
+\caption{ROUGE-1 for selected categories before and after repairing the split. Duplication factor is the upsampled validation count divided by the genuine count. }
+\label{tab:leak}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.04}
+\begin{tabular}{|l|r|r|r|r|}
+\hline
+\textbf{Category} & \textbf{Genuine $n$} & \textbf{Dup.} & \textbf{Leaked} & \textbf{Repaired} \\
+\hline
+\rowcolor{gray!10}
+\textbf{Technology} & \textbf{10} & \textbf{40.0$\times$} & \textbf{0.7275} & \textbf{0.1320} \\
+\hline
+Human Rights  & 14  & 28.6$\times$ & 0.6295 & 0.0562 \\
+\hline
+Health        & 48  & 8.3$\times$  & 0.6044 & 0.1467 \\
+\hline
+Science       & 75  & 5.3$\times$  & 0.4843 & 0.1014 \\
+\hline
+Editorial     & 86  & 4.7$\times$  & 0.6339 & 0.0338 \\
+\hline
+Law and Order & 230 & 1.7$\times$  & 0.2422 & 0.1157 \\
+\hline
+Sports        & 722 & 1.0$\times$  & 0.1713 & 0.1646 \\
+\hline
+Politics      & 722 & 1.0$\times$  & 0.1502 & 0.1292 \\
+\hline
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:leak} makes the mechanism visible. Technology had only ten
+genuine validation articles, was duplicated 40 times and reached 0.7275.
+Sports and Politics required no duplication and changed comparatively little; their residual changes reflect the rebuilt validation composition after the split was reconstructed.
+The practical lesson is to split before balancing and to report genuine
+category counts together with scores. The combination of a very small genuine count
+and an unusually high score exposed the fault.
+The overall ROUGE value alone did not show the problem. Style training consequently uses weighted
+sampling rather than duplicated rows, preserving the minority style sampling
+probability without creating identical articles on both sides of its split.
+
+\subsection{Headline Generation}
+Table~\ref{tab:headline} compares the three requested headline lengths after
+leakage repair. v18 has the highest overall band accuracy but 11.2\% of outputs
+contain media artifacts. Cleaning target headlines in v19 reduces artifacts to
+1.1\% while maintaining 79.7\% band accuracy. v20 additionally cleans article
+inputs, but its evaluation inputs are already clean, so the test cannot isolate
+that hypothesis; v19 is therefore retained as the best documented trade-off.
+
+\begin{table}[!t]
+\caption{Headline results across 900 outputs per version: requested-band accuracy / artifact rate}
+\label{tab:headline}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.1pt}
+\renewcommand{\arraystretch}{1.04}
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Ver.} & \textbf{Short} & \textbf{Medium} & \textbf{Long} & \textbf{Overall} & \textbf{R-1 / R-L} \\
+\hline
+v18 & 88.7 / 0.3 & 76.0 / 11.0 & 78.0 / 22.3 & 80.9 / 11.2 & 0.124 / 0.121 \\
+\hline
+\textbf{v19} & 89.7 / \textbf{0.0} & 74.3 / 0.3 & 75.0 / 3.0 & 79.7 / \textbf{1.1} & 0.134 / 0.130 \\
+\hline
+v20 & 84.7 / 0.3 & 75.3 / 1.0 & 79.7 / 2.3 & 79.9 / 1.2 & 0.139 / 0.136 \\
+\hline
+\end{tabular}
+\end{table}
+
+Final v19 was also rerun on the same 100 Hiru News articles previously used
+for v17. ROUGE-1 improves from 0.1567 to 0.1824, ROUGE-2 from 0.0281 to
+0.0472, and ROUGE-L from 0.1521 to 0.1794; BLEU becomes 0.0100 and one exact
+match is observed. The average generated/reference length ratio is 0.716,
+showing that cross-publisher transfer remains lexically stronger than v17 but
+continues to favor shorter headlines than the external house style.
+
+\subsection{Style Rewriting and Synthetic Target Quality}
+Early style-target generation exposed a teacher-side distribution failure:
+large fractions of targets either copied the source or reused recurring
+style-specific templates. Scaling synthetic generation by more than fivefold
+did not remove this behavior. The targets were therefore regenerated and
+filtered for copying, repetition, factual consistency, structure, script, and
+length; only 7,555 of 22,236 candidates (34.0\%) survived the final pipeline.
+
+The v13 adapter has a 75-output development diagnostic, 15 examples per style.
+Overall reference ROUGE-L is 0.784, ranging from 0.730 for editorial to 0.892
+for formal news, while the measured verbatim-copy rate is 0\%. These numbers
+show that the final pipeline no longer exhibits the original direct-copy
+failure, but they do not by themselves establish style adherence or factual
+faithfulness. We therefore do not interpret source divergence as semantic
+drift and do not report the custom composite as standardized style accuracy.
+A production-prompt comparison is still needed because the serving prompt is
+not identical to the training/evaluation prompt.
+
+\subsection{News Summarization}
+The historical v06/v07 comparison used 15 corpus articles at three lengths.
+A later audit reconstructed the original training logic and found that about
+81\% of articles in a nominal held-out set had already appeared in training in
+another length variant. The cause was sample-level shuffling after each article
+had been expanded into short, medium, and long examples.
+
+To remove this confound, the project froze an article-level 80/10/10 split and
+retrained both the raw v06 and cleaned v07 recipes on the same boundaries. The
+fixed 300-article evaluation subset contains 273 complete articles, producing
+819 summaries per adapter. Table~\ref{tab:summaryfrozen} shows the resulting
+ROUGE-L and band adherence. The two recipes are effectively tied: ROUGE-L
+differs by at most 0.0018 on any band, and adherence moves by only a few points
+in mixed directions. Glue defects are 0\% for both; numeric-unit mismatch is
+below 1\% in every band.
+
+\begin{table}[!b]
+\caption{Leakage-controlled summarization evaluation on 273 held-out articles}
+\label{tab:summaryfrozen}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.3pt}
+\renewcommand{\arraystretch}{1.03}
+\begin{tabular}{|l|cc|cc|}
+\hline
+& \multicolumn{2}{c|}{\textbf{ROUGE-L}} & \multicolumn{2}{c|}{\textbf{In band}} \\
+\textbf{Length} & \textbf{v06} & \textbf{v07} & \textbf{v06} & \textbf{v07} \\
+\hline
+Short  & 0.5077 & 0.5077 & 93.4\% & 94.1\% \\
+\hline
+Medium & 0.4577 & 0.4559 & 92.7\% & 90.5\% \\
+\hline
+Long   & 0.4566 & 0.4575 & 86.8\% & 88.6\% \\
+\hline
+\end{tabular}
+\end{table}
+
+This result changes the interpretation of the cleaning experiment. The older
+small comparison made v07 appear worse; after leakage-controlled retraining,
+the 22-row cleanup produces no measurable automatic-quality regression or gain.
+The cleaned v07 recipe nevertheless retains defense-in-depth checks against the
+known word-glue and numeric-unit defects. Comprehensive factuality remains open:
+a stored historical prediction changed Portugal and Uruguay to Pakistan, a
+failure not captured by ROUGE or unit checks.
+
+\section{System Integration}
+The four tasks are available through web, browser, and Google Docs clients.
+Requests go to a FastAPI backend that selects the required preprocessing and
+LoRA adapter on the shared SinLlama server. Grammar can revert unsafe edits,
+while headline output cleaning removes media tags. A combined system accuracy
+is not reported because the four tasks have different objectives.
+
+\section{Limitations and Future Work}
+Evaluation strength still differs across tasks. Grammar Stage 6 is the strongest
+frozen comparison, but it is local-news based, uses a single project review
+process rather than a multi-rater adjudication study, and unseen-pair recall is
+only about 40\%. The dual-gold development analysis reduces the target-repair
+confound but does not turn the v24/v26 comparison into a fully randomized
+causal experiment. All adapter training used a single fixed seed, so bootstrap
+intervals quantify test-set uncertainty rather than retraining variance.
+
+Headline v19 has one external-publisher test, but the internal evaluator does
+not exactly reproduce the production prompt containing explicit
+\texttt{Category:} and \texttt{Article:} fields. No direct NSina benchmark is
+reported, so we make no state-of-the-art claim. The leakage-controlled
+summarization benchmark now has article-level isolation and 273 held-out
+articles, but automatic metrics and unit checks do not comprehensively measure
+entity/event factuality. Style has a 75-output development diagnostic rather
+than a frozen independent human benchmark, and its training/evaluation prompt
+differs from the serving prompt. Future work will prioritize production-prompt
+retests, factuality auditing, and blinded multi-rater evaluation with Sinhala
+journalism and language experts.
+
+\balance
+\section{Conclusion}
+\systemname{} adapts a shared Sinhala decoder to four newsroom tasks with
+separate LoRA adapters. On frozen Stage 6, Grammar v27 corrects 63 of 143 faulty
+inputs compared with 12 for ByT5-small and none for mT5-small under the tested
+formulations. Dual-gold rescoring shows that target repair is associated with
+both broader correction improvement and greater agreement with the repaired
+convention: the strict unchanged-gold, identical-input subset improves from
+61.5\% to 66.4\%, while the full repaired-gold difference is larger. A much
+smaller $r=4,\alpha=4$ grammar adapter remains comparable to rank-32 models,
+showing parameter efficiency without proving a rank-only causal effect.
+
+Headline experiments demonstrate that balancing by physical duplication before
+splitting can more than double apparent ROUGE-1; final v19 also improves over
+v17 on the same 100 external-publisher articles. Style experiments show that
+synthetic-data volume alone does not repair a defective target distribution,
+with only 34.0\% of final candidates surviving quality filters. In
+summarization, an audit uncovered about 81\% contamination in the legacy
+sample-level evaluation; article-level frozen retraining reverses the earlier
+interpretation and shows the v06 and v07 recipes to be effectively tied on 273
+held-out articles. Across all four tasks, the dominant lesson is that target
+quality, contamination control, prompt fidelity, and evaluation design must be
+validated before higher model scores are treated as genuine progress.
+
+\ificacblind
+\else
+\section*{Acknowledgment}
+The authors thank the Faculty of Computing, Sri Lanka Institute of Information
+Technology, for the supervision, guidance, and computing resources provided
+throughout this research project.
+\fi
+
+\begin{thebibliography}{00}
+\bibitem{desilva2019survey} N. de Silva, ``Survey on publicly available Sinhala natural language processing tools and research,'' arXiv:1906.02358, 2019.
+\bibitem{jayakody2024performance} R. Jayakody and G. Dias, ``Performance of recent large language models for a low-resourced language,'' in \textit{Proc. Int. Conf. Asian Language Processing (IALP)}, 2024, pp. 162--167, doi: 10.1109/IALP63756.2024.10661169.
+\bibitem{dhananjaya2022bertifying} V. Dhananjaya, P. Demotte, S. Ranathunga, and S. Jayasena, ``BERTifying Sinhala - a comprehensive analysis of pre-trained language models for Sinhala text classification,'' in \textit{Proc. LREC}, 2022, pp. 7377--7385.
+\bibitem{grattafiori2024llama3} A. Grattafiori \textit{et al.}, ``The Llama 3 herd of models,'' arXiv:2407.21783, 2024.
+\bibitem{aravinda2025sinllama} H. W. K. Aravinda \textit{et al.}, ``SinLlama - a large language model for Sinhala,'' in \textit{Proc. Moratuwa Eng. Res. Conf. (MERCon)}, 2025, pp. 617--622, doi: 10.1109/MERCon67903.2025.11217094.
+\bibitem{hettiarachchi2024nsina} H. Hettiarachchi, D. Premasiri, L. Uyangodage, and T. Ranasinghe, ``NSina: A news corpus for Sinhala,'' in \textit{Proc. LREC-COLING}, 2024.
+\bibitem{jahan2023summarization} M. A. C. Akmal Jahan and K. K. C. Wijesekara, ``Automated text summarization of Sinhala online articles,'' \textit{J. Science-FAS-SEUSL}, vol. 4, no. 1, pp. 1--15, 2023.
+\bibitem{goonawardena2022grammar} M. Goonawardena, A. Kulatunga, R. Wickramasinghe, T. Weerasekara, H. De Silva, and S. Thelijjagoda, ``Automated spelling checker and grammatical error detection and correction model for Sinhala language,'' in \textit{Proc. Int. Res. Conf. Smart Computing and Systems Engineering (SCSE)}, 2022, pp. 184--189, doi: 10.1109/SCSE56529.2022.9905126.
+\bibitem{hu2022lora} E. J. Hu \textit{et al.}, ``LoRA: Low-rank adaptation of large language models,'' in \textit{Proc. ICLR}, 2022.
+\bibitem{dettmers2023qlora} T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer, ``QLoRA: Efficient finetuning of quantized LLMs,'' in \textit{Advances in Neural Information Processing Systems}, 2023.
+\bibitem{ranasinghe2025encoder} T. Ranasinghe \textit{et al.}, ``Sinhala encoder-only language models and evaluation,'' in \textit{Proc. 63rd ACL}, 2025, pp. 8623--8636.
+\bibitem{xue2021mt5} L. Xue \textit{et al.}, ``mT5: A massively multilingual pre-trained text-to-text transformer,'' in \textit{Proc. NAACL-HLT}, 2021, pp. 483--498.
+\bibitem{hasan2021xlsum} T. Hasan \textit{et al.}, ``XL-Sum: Large-scale multilingual abstractive summarization for 44 languages,'' in \textit{Findings of ACL-IJCNLP}, 2021, pp. 4693--4703.
+\bibitem{ostheimer2024tst} P. S. Ostheimer, M. K. Nagda, M. Kloft, and S. Fellenz, ``Text style transfer evaluation using large language models,'' in \textit{Proc. LREC-COLING}, 2024, pp. 15802--15822.
+\bibitem{xue2022byt5} L. Xue \textit{et al.}, ``ByT5: Towards a token-free future with pre-trained byte-to-byte models,'' \textit{Trans. Assoc. Comput. Linguistics}, vol. 10, pp. 291--306, 2022.
+\bibitem{lin2004rouge} C.-Y. Lin, ``ROUGE: A package for automatic evaluation of summaries,'' in \textit{Text Summarization Branches Out}, 2004, pp. 74--81.
+\end{thebibliography}
+
+\end{document}
