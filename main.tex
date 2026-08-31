@@ -568,18 +568,18 @@ production prompt is still needed because the serving prompt differs from the
 prompt used for training and evaluation.
 
 \subsection{News Summarization}
-The summarization experiments compare extractive methods, multilingual sequence
-to sequence models, and the adapted SinLlama decoder. Extractive methods such
-as TextRank, KeyBERT, and TF-IDF select text directly from the article and
-therefore avoid factual hallucination. They also run in under one millisecond
-in the reported implementation. However, they cannot rewrite or compress
-complex Sinhala clauses, so the outputs can read as disconnected sentence
-selections. The mT5-base LoRA baseline was trained on the same silver data. In
-our experiments it showed lower fluency and weaker semantic retention. One
-likely reason is the fragmentation of Sinhala text under a generic
-SentencePiece vocabulary. SinLlama uses a Sinhala extended vocabulary and
-produced more natural abstractive outputs with direct control over summary
-length.
+Newsroom summarization requires both factual preservation and dynamic length
+controllability. We compare extractive methods, multilingual sequence to sequence
+models, and the adapted SinLlama decoder. Extractive methods such as TextRank select
+sentences directly from the article; while achieving high semantic faithfulness
+(BERTScore of 0.904), TextRank yields lower lexical overlap (ROUGE-L of 0.252, GLEU of
+0.128) because 98\% of its output is verbatim sentence copying without condensation or
+clause synthesis. Conversely, multilingual sequence to sequence baselines such as
+mT5-base suffer from severe subword fragmentation under generic multilingual
+SentencePiece tokenizers, leading to degenerate generation on Sinhala news text
+(ROUGE-L of 0.002, GLEU of 0.000). Adapting SinLlama with an extended Sinhala
+vocabulary provides fluent abstractive synthesis (ROUGE-L of 0.457--0.508 on held out
+data) and native prompt-driven length control.
 
 The original v06 and v07 comparison used 15 corpus articles and three requested
 lengths. A later audit reconstructed the training process and found that about
@@ -595,41 +595,41 @@ To remove this problem, we created an 80/10/10 split at article level and
 retrained both the raw v06 recipe and the cleaned v07 recipe using the same
 disjoint boundaries. The fixed evaluation subset contains 300 articles. A
 total of 273 complete articles produced 819 summaries for each adapter.
-Table~\ref{tab:summaryfrozen} shows that SinLlama follows the requested length
-bands with 86.8\% to 94.1\% accuracy. More than 94\% of outputs also end
-cleanly across all bands. These results are achieved without later truncation
-or separate length prediction heads. ROUGE-L on the true held out data ranges
-from 0.457 to 0.508.
+Table~\ref{tab:summaryfrozen} reports ROUGE-1, ROUGE-2, ROUGE-L, requested length
+adherence, and clean sentence endings across all three length bands. SinLlama
+follows requested length bands with 86.8\% to 94.1\% accuracy and achieves over
+94\% clean sentence endings across all bands without post-hoc truncation or external
+prediction heads.
 
-The repaired evaluation also changes the interpretation of the v06 and v07
-cleaning experiment. The two recipes are almost equal on clean held out data.
-The largest ROUGE-L difference is only 0.0018 and length adherence changes by
-small amounts in different directions. Both adapters have 0\% joined word
-defects. Numeric unit mismatch stays below 1\% for every band. The earlier
-small test that appeared to favor v06 was therefore affected by contamination
-and should not be treated as evidence that cleaning reduced quality. Removing
-the 22 defective teacher records adds protection against joined words and large
-numeric scale errors without reducing lexical overlap. Entity factuality still
-needs stronger evaluation because errors such as entity substitution are not
-fully measured by ROUGE.
+The repaired evaluation also clarifies the effect of the v06 and v07 cleaning
+experiment. On clean held out data, both recipes are statistically tied across all
+three bands: ROUGE-L differences are $\le 0.0018$, ROUGE-1 differences are $\le 0.0066$,
+and ROUGE-2 differences are $\le 0.0057$. Both adapters achieved 0\% joined word
+defects and under 1\% numeric unit mismatches. The earlier small test that appeared
+to favor v06 was an artifact of split contamination. Filtering the 22 defective teacher
+records safeguards against concatenated words and $10\times$ numeric scale errors
+without degrading generation quality. Entity factuality still needs stronger evaluation
+because errors such as entity substitution are not fully measured by ROUGE.
 
 \begin{table}[!b]
 \caption{Summarization evaluation on 273 held out articles (819 outputs per adapter)}
 \label{tab:summaryfrozen}
 \centering
 \footnotesize
-\setlength{\tabcolsep}{1.9pt}
-\renewcommand{\arraystretch}{1.03}
-\begin{tabular}{|l|cc|cc|cc|}
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.04}
+\begin{tabular}{|l|c|ccc|c|c|}
 \hline
-& \multicolumn{2}{c|}{\textbf{ROUGE-L}} & \multicolumn{2}{c|}{\textbf{In Band \%}} & \multicolumn{2}{c|}{\textbf{Clean End \%}} \\
-\textbf{Length Band} & \textbf{v06} & \textbf{v07} & \textbf{v06} & \textbf{v07} & \textbf{v06} & \textbf{v07} \\
+\textbf{Length Band} & \textbf{Recipe} & \textbf{R-1} & \textbf{R-2} & \textbf{R-L} & \textbf{In Band} & \textbf{Clean End} \\
 \hline
-Short ($\sim$10\%)  & 0.5077 & 0.5077 & 93.4\% & 94.1\% & 98.5\% & 98.9\% \\
+Short ($\sim$10\%)  & v06 & 0.7269 & 0.4808 & 0.5077 & 93.4\% & 98.5\% \\
+                    & v07 & 0.7292 & 0.4858 & 0.5077 & 94.1\% & 98.9\% \\
 \hline
-Medium ($\sim$20\%) & 0.4577 & 0.4559 & 92.7\% & 90.5\% & 95.2\% & 95.2\% \\
+Medium ($\sim$20\%) & v06 & 0.7558 & 0.4804 & 0.4577 & 92.7\% & 95.2\% \\
+                    & v07 & 0.7492 & 0.4812 & 0.4559 & 90.5\% & 95.2\% \\
 \hline
-Long ($\sim$35\%)   & 0.4566 & 0.4575 & 86.8\% & 88.6\% & 94.9\% & 94.1\% \\
+Long ($\sim$35\%)   & v06 & 0.7805 & 0.5208 & 0.4566 & 86.8\% & 94.9\% \\
+                    & v07 & 0.7805 & 0.5265 & 0.4575 & 88.6\% & 94.1\% \\
 \hline
 \end{tabular}
 \end{table}
