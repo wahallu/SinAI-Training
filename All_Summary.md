@@ -17,6 +17,21 @@ statistically tied** on every automatic metric measured — the older
 comparison that appeared to favor v06 was an artifact of a data-leak
 affecting ~81% of the "held-out" test set, not a real quality difference.
 
+**Update (2026-08-31):** a new set of evaluation numbers now exists,
+carried in the PP2 Extended presentation deck (`PP2_Extended.pdf`,
+section "B7 / Summarization"). These add two things the record did not
+previously contain: a **measured cross-paradigm comparison**
+(SinLLaMA-v07 vs. mT5-base vs. TextRank) and a **measured cross-version
+comparison** (v04 → v05 → v06 → v07), both scored with an expanded metric
+set that now includes BERTScore and GLEU alongside ROUGE. The single most
+important new fact: **mT5-base is not merely weaker on Sinhala, it is
+measurably broken** (ROUGE-L 0.2%, degenerate non-Sinhala output) — which
+retires the earlier estimate in Section 17.2 that put it around 0.35–0.42.
+These numbers are recorded in full in **Section 18**, along with an
+explicit note that their sample size and eval provenance are not yet
+established, and therefore that they do **not** yet overturn the
+Section 13 frozen-split finding.
+
 ---
 
 ## 1. Overview: what "summarization" means in this project
@@ -65,6 +80,18 @@ is gone — most likely removed in the `c406b23` "Clean up repo for GitHub"
 commit, which explicitly excluded some models/datasets/caches. No numeric
 mT5-vs-SinLLaMA comparison result is recoverable from the repo as it
 stands.
+
+**Superseded 2026-08-31:** a numeric mT5-vs-SinLLaMA comparison *does*
+now exist — it just wasn't produced by the lost `evaluate_mt5.py`. The
+PP2 Extended deck reports `mt5-base` scoring ROUGE-L 0.2% / ROUGE-1 0.2%
+/ ROUGE-2 0.0% / BERTScore 74.1% / GLEU 0.0% against SinLLaMA-v07's
+50.9 / 50.9 / 47.9 / 91.1 / 30.8, with sample output that is not Sinhala
+at all. See Section 18. Note that the deck's `mt5-base` row is labelled
+as the encoder-decoder *baseline*, and it is not yet confirmed whether it
+refers to the LoRA-fine-tuned `summarization_mt5_v01` adapter described
+here or to a stock, un-fine-tuned `google/mt5-base` — the distinction
+matters a great deal for what the number actually proves, and is one of
+the open provenance questions listed in Section 18.4.
 
 ---
 
@@ -648,7 +675,13 @@ proposal) had 7 phases. **Phases 0–3 are complete** (Sections 9–13 above).
   MiniLM-L12-v2` model already cached locally — LaBSE's documented
   language list includes Sinhala; MiniLM's does not). Would catch
   paraphrases that mean the same thing but share few words, which ROUGE
-  (pure n-gram overlap) can't see.
+  (pure n-gram overlap) can't see. **Partially overtaken as of
+  2026-08-31:** the PP2 Extended results (Section 18) already carry
+  BERTScore, which serves the same purpose. What's missing is not the
+  metric but the protocol — those scores were not computed on the frozen
+  split, so Phase 4 now reduces to folding BERTScore (and GLEU) into
+  `8_evaluate_summarizer.py` rather than building a LaBSE pipeline from
+  scratch.
 - **Phase 5 — LLM-judge factuality**: reuse `5_gemini_summary_generator.py`'s
   existing multi-key rotation and resumable infrastructure to have Gemini
   check whether entities/numbers/events in each generated summary are
@@ -744,8 +777,12 @@ production.
 - `summarizer/research-paper.tex` — the paper itself; Sections III, IV,
   V, VI-D, and Limitations were updated 2026-08-26 to report the Phase 3
   result as the authoritative v06-vs-v07 comparison.
+- `PP2_Extended.pdf` — the PP2 Extended presentation deck, section
+  `B7 / Summarization`. Carries the cross-paradigm and cross-version
+  metric tables transcribed in Section 18. **Not backed by a persisted
+  eval JSON in the repo** — see Section 18.4.
 - This file (`All_Summary.md`) — the full retrospective, written
-  2026-08-26.
+  2026-08-26; Section 18 and the Section 17.2 correction added 2026-08-31.
 
 ---
 
@@ -755,7 +792,7 @@ production.
 
 1. **Autoregressive SinLLaMA-8B is the Definitive Architecture for Sinhala Summarization**:
    - **Extractive algorithms** (TextRank, KeyBERT, TF-IDF, RAKE, YAKE) are fast ($<1\text{ ms}$) and 100% faithful to source sentences, but cannot synthesize, rephrase, or compress complex Sinhala news reporting into concise paragraphs.
-   - **Encoder-Decoder models (`mT5-base + LoRA`)** suffer from heavy subword fragmentation under multilingual SentencePiece vocabularies on Sinhala script, leading to weaker coherence and lower ROUGE overlap.
+   - **Encoder-Decoder models (`mT5-base`)** fail outright on this task, not marginally: measured ROUGE-L of $0.002$ with output that leaves the Sinhala script entirely (repeated date-like numeric strings, stray Latin and CJK fragments). The mechanism is heavy subword fragmentation of Sinhala under a multilingual SentencePiece vocabulary, but the consequence is degenerate generation rather than merely "weaker coherence" — see Section 18.
    - **Autoregressive models (`SinLLaMA-8B + LoRA`)** with extended Sinhala vocabulary achieve superior linguistic fluency, natural discourse flow, and the highest semantic quality ($\text{ROUGE-L} \approx 0.46\text{--}0.51$).
 
 2. **Native Multi-Length Controllability is Highly Effective**:
@@ -780,9 +817,19 @@ production.
 
 | Paradigm / Model | Mechanism / Tokenizer | Strengths | Limitations | Benchmark Performance |
 | :--- | :--- | :--- | :--- | :--- |
-| **Extractive (TextRank, KeyBERT, TF-IDF, RAKE, YAKE)** | Sentence graph ranking, TF-IDF cosine similarity, MMR dense vectors | 100% factual faithfulness; $<1\text{ ms}$ latency on CPU; no GPU needed. | Rigid verbatim extraction; cannot merge clauses or rephrase; poor narrative compression. | Low-to-Moderate ($\text{ROUGE-L} \approx 0.20\text{--}0.35$ vs gold). |
-| **Encoder-Decoder (`mT5-base + LoRA`)** | Sequence-to-Sequence (582M params); Multilingual SentencePiece | Small memory footprint; dedicated seq2seq design. | Severe subword fragmentation on Sinhala Unicode; lower semantic coherence. | Moderate ($\text{ROUGE-L} \approx 0.35\text{--}0.42$). |
-| **Autoregressive (`SinLLaMA-8B + LoRA`)** | Causal Decoder (Llama-3-8B 4-bit NF4); Extended Sinhala Tokenizer | Fluent native Sinhala synthesis; dynamic multi-length control; high factual retention. | Requires prompt loss masking and teacher-data quality filtering; $\sim 1.5\text{--}3.5\text{ s}$ latency. | **Highest ($\text{ROUGE-L} \approx 0.456\text{--}0.508$ blind / $\sim 0.55\text{--}0.62$ dev)**. |
+| **Extractive (TextRank, KeyBERT, TF-IDF, RAKE, YAKE)** | Sentence graph ranking, TF-IDF cosine similarity, MMR dense vectors | 100% factual faithfulness; $<1\text{ ms}$ latency on CPU; no GPU needed. | Rigid verbatim extraction; cannot merge clauses or rephrase; poor narrative compression. | Low-to-Moderate — **measured 0.252 ROUGE-L, 0.904 BERTScore, 0.128 GLEU** (TextRank, PP2 deck; consistent with the earlier 0.20–0.35 estimate). |
+| **Encoder-Decoder (`mT5-base`)** | Sequence-to-Sequence (582M params); Multilingual SentencePiece | Small memory footprint; dedicated seq2seq design. | Catastrophic on Sinhala: emits repeated numeric strings and Latin/CJK junk rather than Sinhala text at all. | **Effectively zero — measured 0.002 ROUGE-L, 0.000 ROUGE-2, 0.000 GLEU** (PP2 deck). The 0.741 BERTScore is a floor artifact, not evidence of meaning. |
+| **Autoregressive (`SinLLaMA-8B + LoRA`)** | Causal Decoder (Llama-3-8B 4-bit NF4); Extended Sinhala Tokenizer | Fluent native Sinhala synthesis; dynamic multi-length control; high factual retention. | Requires prompt loss masking and teacher-data quality filtering; $\sim 1.5\text{--}3.5\text{ s}$ latency. | **Highest — 0.456–0.508 ROUGE-L blind (frozen split, N=273); 0.509 ROUGE-L / 0.911 BERTScore / 0.308 GLEU on the PP2 deck protocol.** |
+
+> **Correction note (2026-08-31).** The encoder-decoder row above
+> previously read *"Moderate ($\text{ROUGE-L} \approx 0.35\text{--}0.42$)"*
+> and attributed mT5's weakness to "severe subword fragmentation" and
+> "lower semantic coherence." That figure was an unsourced estimate — no
+> mT5 evaluation had ever been persisted (Section 2). The measured result
+> is roughly **two orders of magnitude lower**, and the failure mode is
+> not degraded Sinhala but *non-Sinhala output*. The extractive row's
+> range has likewise been pinned to the measured TextRank number. Both
+> rows now cite measurement rather than estimate.
 
 ---
 
@@ -818,4 +865,217 @@ production.
 
 5. **Morphology-Aware Inference Decoding**:
    Applying `no_repeat_ngram_size` constraints suppresses valid Sinhala opening phrases and truncates opening characters when summaries echo article titles. Using greedy decoding (`num_beams=1`), mild repetition penalty (`repetition_penalty=1.15`), and boundary-safe assistant header splitting produces optimal, uncorrupted Sinhala generation.
+
+
+---
+
+## 18. The PP2 Extended presentation results (2026-08-31)
+
+**Source:** `PP2_Extended.pdf`, deck section footer `B7 / Summarization`,
+slides "Best way to make teacher summaries", "Extractive vs Abstractive vs
+mT5", "Actual Evaluation Results", and three "Model Difference" slides.
+
+This is the first evaluation in this component's history that measures
+**across paradigms** (fine-tuned LLM vs. encoder-decoder vs. extractive)
+and **across adapter versions** (v04 → v07) using one common metric set.
+It also adds two metrics the earlier evaluations never carried:
+**BERTScore** (semantic similarity, so paraphrase survives) and **GLEU**
+(penalises degenerate repetition). Both address exactly the blind spots
+Section 15 listed as unfinished work — ROUGE cannot see paraphrase, and
+nothing in the old metric set caught repetition collapse.
+
+### 18.1 Cross-paradigm results
+
+All three systems scored on the same protocol. Exact-match was 0 for all
+three (expected — these are abstractive tasks). Char-F1 was not reported.
+
+| Model | Approach | ROUGE-L | ROUGE-1 | ROUGE-2 | BERTScore | GLEU |
+|---|---|---:|---:|---:|---:|---:|
+| `summarization_sinllama_v07` | Fine-tuned abstractive LLM | **50.9%** | 50.9% | 47.9% | **91.1%** | **30.8%** |
+| `mt5-base` | Encoder-decoder baseline | 0.2% | 0.2% | 0.0% | 74.1% | 0.0% |
+| `textrank` | Extractive (copy-paste) | 25.2% | 25.2% | 23.6% | 90.4% | 12.8% |
+
+**The mT5 result is the headline finding, and it is qualitative before it
+is numeric.** The deck shows mT5-base's actual output on a Sinhala news
+article, and it contains no Sinhala at all — it emits a repeated
+date-like string (`01.01.201`), Latin fragments (`AnatomAnatom`,
+`ksuksuksu`, `Gonz`, `physiologphysiology`), and CJK characters. A
+ROUGE-L of 0.2% and a GLEU of exactly 0.0% are the arithmetic shadow of
+that: there is essentially no n-gram overlap because there is essentially
+no Sinhala. The 74.1% BERTScore should not be read as "74% of the meaning
+survived" — BERTScore has a high floor on any two strings, and for this
+output it is a floor reading, not a signal. **This retires the claim,
+carried in earlier versions of this document (Section 17.2), that mT5-base
+scores somewhere around 0.35–0.42.** That number was an estimate; this is
+a measurement, and it is roughly 200x lower.
+
+The deck's own framing of why the teacher-model pipeline exists now reads
+as directly evidence-backed rather than assumed: *mT5-base did not produce
+usable Sinhala summaries, so LLM teacher models were used to create the
+training targets instead, and the final model learns from those teacher
+summaries.*
+
+**TextRank behaves exactly as the paradigm predicts.** Its 90.4%
+BERTScore is close to v07's 91.1% — unsurprising, since copying source
+sentences verbatim preserves meaning almost by construction. But its
+ROUGE-L (25.2%) is half of v07's and its GLEU (12.8%) is under half,
+because it cannot merge or rephrase to match a human-style reference
+summary. The deck quantifies this directly: TextRank's output is measured
+at **2% abstractive / 98% verbatim**, against v07's **56% abstractive /
+44% verbatim**. This is the clearest evidence in the whole record for why
+an abstractive approach was necessary rather than merely preferred: the
+extractive baseline is *semantically* competitive and *journalistically*
+unusable.
+
+### 18.2 Cross-version results (v04 → v07)
+
+| Adapter | ROUGE-L | ROUGE-1 | ROUGE-2 | BERTScore | GLEU |
+|---|---:|---:|---:|---:|---:|
+| `summarization_sinllama_v07` | **50.9%** | 50.9% | **47.9%** | **91.1%** | **30.8%** |
+| `summarization_sinllama_v06` | 45.2% | **53.2%** | 34.4% | 89.2% | 26.8% |
+| `summarization_sinllama_v05` | 25.5% | 30.1% | 19.5% | 87.6% | 11.4% |
+| `summarization_sinllama_v04` | 30.4% | 30.4% | 29.3% | 88.9% | 16.7% |
+
+Three things are worth reading carefully here.
+
+**First, v04 and v05 fill in gaps this document previously recorded as
+unknowable.** Sections 5 and 6 stated that no persisted evaluation
+survived for v05, and that v04's only surviving result was an ad-hoc N=15
+run reporting ROUGE-1 0.668. Both now have a number on a shared protocol.
+Note that v04's 30.4% ROUGE-1 here is *far* below the 66.8% in
+`eval_results/eval_results-2.json` — the two are not comparable (different
+N, different reference set, different protocol), and the older number
+should not be quoted alongside this table.
+
+**Second, v04 scores *above* v05 on every metric.** This is consistent
+with the v05 post-mortem already in Section 6: the global 0.05–0.50
+compression-ratio filter discarded 73.6% of the Qwen teacher data, so v05
+trained on a badly thinned corpus. v05 is the one clear regression in the
+version history, and the length-control redesign in v06 was in part what
+recovered the discarded data by rebucketing it.
+
+**Third, the v06 vs. v07 ordering here conflicts with Section 13, and
+Section 13 remains the authoritative comparison.** See 18.4.
+
+There is one genuinely odd cell: **v06 scores higher ROUGE-1 than v07
+(53.2% vs. 50.9%) while scoring lower on ROUGE-2 (34.4% vs. 47.9%) and
+lower on ROUGE-L (45.2% vs. 50.9%).** Higher unigram overlap with sharply
+lower bigram and LCS overlap is the signature of a model selecting
+roughly the right *words* but assembling them in a different *order* than
+the reference. That is a plausible real difference — but with an unknown
+sample size it could equally be sampling noise, and it should not be
+built into a claim yet.
+
+### 18.3 Length control, demonstrated rather than asserted
+
+The deck makes the v04/v05 → v06/v07 transition concrete in a way the
+metrics tables cannot. On the same ~125-word source article:
+
+**v04 / v05 — one summary length.** Requesting short, medium, and long
+returns **the same output all three times**: 125 → 48 words (62%
+condensed), 180 output tokens, ~19.5–20.2 s, 48% abstractive / 52%
+verbatim, identical in all three panels. The deck's own diagnosis: *the
+model was essentially trained around one target summary style and length,
+so it learned a fixed-length tendency.* This is the clearest artefact yet
+of the single-length training corpora used through v05.
+
+**v06 / v07 — three controlled lengths.** The same request now produces
+three genuinely different outputs:
+
+| Requested | Output words | Condensation | Output tokens | Latency | Rate | Abstractive |
+|---|---:|---:|---:|---:|---:|---:|
+| Short (~10%) | 125 → 25 | 80% | 80 | 9.14 s | 8.76 tok/s | 56% |
+| Medium (~20%) | 125 → 34 | 73% | 130 | 14.91 s | 8.72 tok/s | 65% |
+| Long (~35%) | 125 → 51 | 59% | 200 | 22.46 s | 8.91 tok/s | 51% |
+
+Generation rate is essentially constant (8.7–8.9 tok/s) across all three,
+so latency scales with requested length rather than varying with it —
+which is the expected and desirable behaviour for a length-conditioned
+model, and useful to state plainly in the paper.
+
+Per-model single-article readings on the cross-version slide, for the
+record:
+
+| Adapter | Compression | Output tokens | Latency | Rate | Abstractive / verbatim |
+|---|---|---:|---:|---:|---|
+| v07 | 125 → 25 words (80%) | 80 | 8.94 s | 8.95 tok/s | 56% / 44% |
+| v06 | 125 → 13 words (90%) | 80 | 8.93 s | 8.96 tok/s | 62% / 38% |
+| v05 | 125 → 41 words (67%) | 180 | 19.85 s | 9.07 tok/s | 54% / 46% |
+| v04 | 125 → 48 words (62%) | 180 | 19.54 s | 9.21 tok/s | 48% / 52% |
+
+Note v06 compressing to 13 words where v07 produced 25 on the same "short"
+request — v06 overshooting the ~10% target downward on this one article.
+A single article is not a band-adherence measurement (Section 13's N=273
+run is), but it is worth not over-claiming v06's compression from this
+slide.
+
+### 18.4 Provenance: what is not yet established about these numbers
+
+This section is deliberately separated so the numbers above are never
+quoted without it.
+
+**The sample size, evaluation script, and adapter builds behind the 18.1
+and 18.2 tables are not documented anywhere in the repo record as it
+currently stands.** Specifically unresolved:
+
+1. **N is unknown.** Every other evaluation in this history carries its N
+   prominently (N=10 for v02, N=15 for v04, N=45 for the v06/v07 tracked
+   evals, N=273 for the frozen split) because N is what decides whether a
+   5-point ROUGE gap means anything. These tables carry none.
+2. **The test set is unknown.** If these were scored against articles
+   drawn from the training corpus — the exact failure mode Section 10
+   documents — then they inherit the same ~81% contamination and the
+   v06-vs-v07 ordering is measuring leakage, not quality.
+3. **The adapter builds are unknown.** These could be the production
+   adapters (trained on the original leaky splits) or the staged
+   `*_frozensplit` retrains from Section 12. Only the latter would be
+   comparable to Section 13.
+4. **`mt5-base` is ambiguous** — fine-tuned `summarization_mt5_v01`
+   (Section 2) or stock `google/mt5-base`? A stock multilingual checkpoint
+   producing junk on Sinhala is unremarkable; a *fine-tuned* one doing so
+   is a much stronger and more publishable finding.
+5. **"50K+ training summaries"** on the dataset slide does not obviously
+   match any figure in this document. v06/v07's corpus is 35,569 articles
+   × 3 lengths ≈ 106,700 summaries; v05's Qwen file is 170,923. 50K+ is
+   presumably a conservative rounding of one of these, but which is not
+   stated.
+
+**Consequence for the paper.** Section 13's leakage-free N=273 frozen-split
+result — **v06 and v07 statistically tied, ROUGE-L differing by ≤ 0.002 on
+every band** — remains the authoritative v06-vs-v07 comparison. The deck's
+v07 > v06 ordering is a *third* protocol, distinct from both the old leaky
+N=45 comparison (which favoured v06) and the frozen-split comparison
+(which found a tie). Three protocols producing three different orderings
+on the same pair of adapters is itself the strongest possible argument
+for the frozen split's necessity, and is worth stating that way rather
+than picking whichever ordering is most flattering.
+
+**Consequence for the cross-paradigm claims, which are on much firmer
+ground.** The v07 vs. mT5 vs. TextRank comparison does *not* depend on
+resolving these questions. Contamination inflates a fine-tuned model's
+score against its own training distribution; it cannot manufacture a
+200x gap, and it cannot explain mT5 emitting CJK characters instead of
+Sinhala. Those findings can be used as-is. It is only the v06-vs-v07
+ordering that needs the provenance nailed down first.
+
+### 18.5 What would close this out
+
+Small, cheap, and would convert 18.1/18.2 from "presented" to "citable":
+
+- Re-run the same metric set (ROUGE-1/2/L + BERTScore + GLEU) through
+  `abstractive/8_evaluate_summarizer.py` against
+  `data/summarization_frozen_eval_subset.jsonl`, so the new metrics land
+  on the already-frozen, already-blind N=273 protocol.
+- Extend that run to cover v04, v05, mT5, and TextRank, so the
+  cross-paradigm and cross-version tables become leakage-free by
+  construction rather than by argument.
+- Persist the result to `6_eval_results/` and commit it — the recurring
+  failure across this entire history (Sections 4, 6, 16) has been
+  evaluations that ran, informed a decision, and then vanished. These
+  deck numbers are currently in that same unpersisted state.
+
+Adding BERTScore and GLEU to the frozen-split evaluator would also
+substantially deliver **Phase 4** (semantic similarity), which Section 15
+still lists as not started — BERTScore is a direct substitute for the
+planned LaBSE embedding comparison, and arguably a better-supported one.
 

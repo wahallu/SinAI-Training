@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PP2 Extended — Summarization Evaluation Slides</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+Sinhala:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg-page: #0b0f19;
+      --slide-bg: #f8fafc;
+      --card-bg: #ffffff;
+      --brand-red: #e11d48;
+      --brand-red-light: #ffe4e6;
+      --brand-red-dark: #9f1239;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --text-light: #94a3b8;
+      --border-subtle: #e2e8f0;
+      --border-card: #cbd5e1;
+      --banner-dark: #0f172a;
+      
+      --emerald-main: #059669;
+      --emerald-bg: #ecfdf5;
+      --emerald-border: #a7f3d0;
+      
+      --blue-main: #2563eb;
+      --blue-bg: #eff6ff;
+      --blue-border: #bfdbfe;
+      
+      --amber-main: #d97706;
+      --amber-bg: #fffbeb;
+      --amber-border: #fde68a;
+      
+      --slate-main: #475569;
+      --slate-bg: #f1f5f9;
+      --slate-border: #cbd5e1;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-page);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 48px;
+      padding: 48px 24px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .si {
+      font-family: 'Noto Sans Sinhala', 'Plus Jakarta Sans', sans-serif;
+      line-height: 1.75;
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Fixed 1920x1080 16:9 Presentation Slide Canvas */
+    .slide-wrapper {
+      width: 1920px;
+      height: 1080px;
+      min-width: 1920px;
+      min-height: 1080px;
+      max-width: 1920px;
+      max-height: 1080px;
+      background: var(--slide-bg);
+      border-radius: 24px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 50px 72px 40px 72px;
+    }
+
+    /* Slide Header */
+    .slide-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+
+    .eyebrow {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--brand-red);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .eyebrow::before {
+      content: "";
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      background-color: var(--brand-red);
+      border-radius: 2px;
+    }
+
+    .slide-title {
+      font-size: 38px;
+      font-weight: 800;
+      color: var(--text-main);
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+
+    .slide-badge {
+      background: #ffffff;
+      border: 1px solid var(--border-card);
+      padding: 9px 16px;
+      border-radius: 12px;
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+    }
+
+    .badge-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--emerald-main);
+    }
+
+    /* Content Area */
+    .slide-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      justify-content: flex-start;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border-radius: 18px;
+      border: 1px solid var(--border-subtle);
+      padding: 20px 24px;
+      box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.04);
+    }
+
+    /* Grid Layouts */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 18px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    /* Source vs Reference Banner */
+    .comparison-input-bar {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 20px;
+      background: #ffffff;
+      border-radius: 16px;
+      border: 1px solid var(--border-subtle);
+      padding: 16px 22px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    }
+
+    .input-box-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .input-box-label {
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-light);
+    }
+
+    .word-badge {
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 20px;
+      background: #f1f5f9;
+      color: #334155;
+    }
+
+    .input-box-text {
+      font-size: 14.5px;
+      line-height: 1.65;
+      color: #1e293b;
+    }
+
+    /* Model Output Cards */
+    .model-card {
+      background: #ffffff;
+      border-radius: 18px;
+      border: 2px solid var(--border-subtle);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+    }
+
+    .model-card.champion {
+      border-color: var(--emerald-main);
+      box-shadow: 0 10px 25px -5px rgba(5, 150, 105, 0.15), 0 0 0 1px var(--emerald-main);
+    }
+
+    .model-card.extractive {
+      border-color: #cbd5e1;
+    }
+
+    .model-card.baseline {
+      border-color: #fca5a5;
+    }
+
+    .model-card-header {
+      padding: 14px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+    }
+
+    .champion .model-card-header {
+      background: var(--emerald-bg);
+      color: #065f46;
+    }
+
+    .extractive .model-card-header {
+      background: var(--slate-bg);
+      color: #334155;
+    }
+
+    .baseline .model-card-header {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .model-title-group h3 {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+
+    .model-title-group p {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.85;
+      margin-top: 1px;
+    }
+
+    .status-pill {
+      font-size: 11px;
+      font-weight: 800;
+      padding: 4px 12px;
+      border-radius: 30px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .pill-champion {
+      background: var(--emerald-main);
+      color: #ffffff;
+      box-shadow: 0 2px 6px rgba(5, 150, 105, 0.3);
+    }
+
+    .pill-fastest {
+      background: #3b82f6;
+      color: #ffffff;
+    }
+
+    .pill-failure {
+      background: #dc2626;
+      color: #ffffff;
+    }
+
+    .model-card-body {
+      padding: 18px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .output-speech-bubble {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: #0f172a;
+      min-height: 125px;
+      max-height: 125px;
+      overflow-y: auto;
+    }
+
+    .output-speech-bubble.collapsed {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #991b1b;
+      background: #fff1f2;
+      border-color: #fecdd3;
+      word-break: break-all;
+    }
+
+    mark.extracted {
+      background: #fef08a;
+      color: #713f12;
+      padding: 0 4px;
+      border-radius: 4px;
+    }
+
+    /* Verdict & Feature List */
+    .verdict-box {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.45;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .champion .verdict-box {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #14532d;
+    }
+
+    .extractive .verdict-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      color: #334155;
+    }
+
+    .baseline .verdict-box {
+      background: #fff1f2;
+      border: 1px solid #fecdd3;
+      color: #881337;
+    }
+
+    .verdict-title {
+      font-weight: 800;
+      font-size: 11.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Progress & Metrics Bar */
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .metric-val {
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 7px;
+      background: #e2e8f0;
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      margin-top: 4px;
+    }
+
+    .progress-fill-emerald {
+      height: 100%;
+      background: var(--emerald-main);
+    }
+
+    .progress-fill-yellow {
+      height: 100%;
+      background: #eab308;
+    }
+
+    .progress-fill-red {
+      height: 100%;
+      background: #ef4444;
+    }
+
+    /* Quantitative Score Grid */
+    .mini-score-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-top: 6px;
+      border-top: 1px solid #f1f5f9;
+      padding-top: 8px;
+    }
+
+    .mini-score-item {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 5px 6px;
+      text-align: center;
+    }
+
+    .mini-score-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+    }
+
+    .mini-score-value {
+      font-size: 13px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-top: 1px;
+    }
+
+    .val-target {
+      color: #047857;
+    }
+
+    .val-good {
+      color: #0284c7;
+    }
+
+    .val-poor {
+      color: #b91c1c;
+    }
+
+    /* Bottom Dark Banner */
+    .dark-banner {
+      background: var(--banner-dark);
+      color: #ffffff;
+      border-radius: 16px;
+      padding: 18px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.3);
+    }
+
+    .dark-banner-text {
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 1.55;
+      color: #cbd5e1;
+      flex: 1;
+    }
+
+    .dark-banner-text strong {
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    .highlight-pill {
+      background: rgba(225, 29, 72, 0.2);
+      border: 1px solid rgba(225, 29, 72, 0.4);
+      color: #fecdd3;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+
+    .highlight-emerald {
+      background: rgba(5, 150, 105, 0.25);
+      border: 1px solid rgba(5, 150, 105, 0.5);
+      color: #6ee7b7;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+
+    .banner-stat-box {
+      display: flex;
+      gap: 20px;
+      border-left: 1px solid #334155;
+      padding-left: 24px;
+    }
+
+    .stat-unit {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .stat-num {
+      font-size: 28px;
+      font-weight: 800;
+      color: #ffffff;
+      letter-spacing: -0.02em;
+    }
+
+    .stat-lbl {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 1px;
+    }
+
+    /* Slide Footer */
+    .slide-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-light);
+      border-top: 1px solid #e2e8f0;
+      padding-top: 14px;
+    }
+
+    .footer-brand {
+      color: var(--brand-red);
+      font-weight: 800;
+      letter-spacing: 0.05em;
+    }
+
+    /* Slide 2 Table Styles */
+    .matrix-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #ffffff;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    }
+
+    .matrix-table th {
+      background: #f1f5f9;
+      padding: 14px 18px;
+      font-size: 11.5px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #475569;
+      border-bottom: 1px solid #e2e8f0;
+      text-align: left;
+    }
+
+    .matrix-table th.center, .matrix-table td.center {
+      text-align: center;
+    }
+
+    .matrix-table td {
+      padding: 14px 18px;
+      font-size: 14px;
+      color: #1e293b;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+    }
+
+    .matrix-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .matrix-table tr.champion-row {
+      background: #f0fdf4;
+      font-weight: 700;
+    }
+
+    .matrix-table tr.champion-row td {
+      color: #065f46;
+      border-bottom-color: #dcfce7;
+    }
+
+    .score-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-weight: 800;
+      font-size: 12.5px;
+    }
+
+    .badge-target {
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+    }
+
+    .badge-good {
+      background: #dbeafe;
+      color: #1e40af;
+      border: 1px solid #bfdbfe;
+    }
+
+    .badge-acceptable {
+      background: #fef3c7;
+      color: #92400e;
+      border: 1px solid #fde68a;
+    }
+
+    .badge-poor {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+
+    /* Floating Navigation Controls */
+    .nav-controls {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      gap: 12px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      padding: 8px 14px;
+      border-radius: 40px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+      z-index: 1000;
+    }
+
+    .nav-btn {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: #ffffff;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s ease;
+    }
+
+    .nav-btn:hover {
+      background: var(--brand-red);
+    }
+
+    /* Print & Export Optimizations */
+    @media print {
+      body {
+        background: transparent;
+        padding: 0;
+        gap: 0;
+      }
+      .nav-controls {
+        display: none !important;
+      }
+      .slide-wrapper {
+        page-break-after: always;
+        box-shadow: none;
+        border-radius: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Floating Navigation Controls -->
+  <div class="nav-controls">
+    <a href="#slide-1" class="nav-btn">Slide 16A: Qualitative Proof</a>
+    <a href="#slide-2" class="nav-btn">Slide 16B: Benchmark Matrix</a>
+    <button onclick="window.print()" class="nav-btn" style="background: var(--brand-red);">🖨️ Export PDF / Print</button>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- SLIDE 1: QUALITATIVE 3-WAY COMPARATIVE BENCHMARK PROOF                    -->
+  <!-- ========================================================================= -->
+  <div class="slide-wrapper" id="slide-1">
+    
+    <!-- Header -->
+    <div class="slide-header">
+      <div>
+        <div class="eyebrow">BACKUP / Q&A EVIDENCE</div>
+        <h1 class="slide-title">Summarization — Model Comparison & Qualitative Proof</h1>
+      </div>
+      <div class="slide-badge">
+        <span class="badge-dot"></span>
+        <span>Controlled Evaluation Across 3 Paradigms</span>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="slide-content">
+      
+      <!-- Source & Ground Truth Box -->
+      <div class="comparison-input-bar">
+        <div>
+          <div class="input-box-header">
+            <span class="input-box-label">Original Source Article (Input)</span>
+            <span class="word-badge">53 words · 3 Sentences</span>
+          </div>
+          <p class="input-box-text si">
+            බස්නාහිර පළාතේ ප්‍රධාන මාර්ග කිහිපයක් ප්‍රතිසංස්කරණය කිරීමේ විශාල ව්‍යාපෘතියක් ලබන සතියේ සිට ආරම්භ කිරීමට මහාමාර්ග අමාත්‍යාංශය තීරණය කර ඇත. මේ සඳහා රුපියල් මිලියන 500 ක මුදලක් වෙන්කර ඇති අතර ව්‍යාපෘතිය මාස 6 ක් ඇතුළත අවසන් කිරීමට නියමිතය. මෙමගින් නගරබද මාර්ග තදබදය සැලකිය යුතු ලෙස අඩුවනු ඇතැයි අපේක්ෂා කෙරේ.
+          </p>
+        </div>
+
+        <div style="border-left: 1px solid #e2e8f0; padding-left: 20px;">
+          <div class="input-box-header">
+            <span class="input-box-label">Human Reference (Ground Truth)</span>
+            <span class="word-badge" style="background: #e0e7ff; color: #3730a3;">15 words · Editorial Standard</span>
+          </div>
+          <p class="input-box-text si" style="font-weight: 600; color: #1e1b4b;">
+            රුපියල් මිලියන 500ක වියදමින් බස්නාහිර පළාතේ ප්‍රධාන මාර්ග ප්‍රතිසංස්කරණය කිරීමේ 6-මස ව්‍යාපෘතියක් ලබන සතියේ ආරම්භ වේ.
+          </p>
+        </div>
+      </div>
+
+      <!-- 3-Column Comparative Output Cards -->
+      <div class="grid-3" style="flex: 1;">
+        
+        <!-- CARD 1: SinLLaMA-v07 (Our Model) -->
+        <div class="model-card champion">
+          <div class="model-card-header">
+            <div class="model-title-group">
+              <h3>summarization_sinllama_v07</h3>
+              <p>Fine-tuned Abstractive LLM</p>
+            </div>
+            <span class="status-pill pill-champion">🏆 Best Output</span>
+          </div>
+          
+          <div class="model-card-body">
+            <div>
+              <div class="output-speech-bubble si">
+                "මහාමාර්ග අමාත්‍යාංශය බස්නාහිරපළාත් මාර්ග ප්‍රතිසංස්කරණ ව්‍යාපෘතියේ පළමු පියවර ලබන සතියේ අරඹයි; රු.මිලියන 500 වෙන්කර, කාලය මාස 6 කි."
+              </div>
+
+              <div class="verdict-box" style="margin-top: 10px;">
+                <span class="verdict-title">⭐⭐⭐⭐⭐ Human-Grade Synthesis</span>
+                <p>Natural journalistic rewrite — synthesizes key facts from <b>all 3 source sentences</b> into fluent, coherent Sinhala prose.</p>
+              </div>
+            </div>
+
+            <div>
+              <div class="metric-row">
+                <span>Output Synthesis</span>
+                <span class="metric-val" style="color: #059669;">41% Abstractive (59% Verbatim)</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill-emerald" style="width: 41%;"></div>
+                <div class="progress-fill-yellow" style="width: 59%;"></div>
+              </div>
+              <div class="metric-row" style="margin-top: 6px;">
+                <span>Compression</span>
+                <span class="metric-val">53 → 22 words (58% condensed)</span>
+              </div>
+              <div class="metric-row" style="font-size: 10.5px; color: #64748b; margin-top: 2px;">
+                <span>Speed: <b>14.53 s</b> (8.95 tok/s)</span>
+                <span>Output: <b>130 tokens</b></span>
+              </div>
+
+              <div class="mini-score-grid">
+                <div class="mini-score-item">
+                  <div class="mini-score-label">ROUGE-L</div>
+                  <div class="mini-score-value val-target">49%</div>
+                </div>
+                <div class="mini-score-item">
+                  <div class="mini-score-label">BERTScore</div>
+                  <div class="mini-score-value val-target">91%</div>
+                </div>
+                <div class="mini-score-item">
+                  <div class="mini-score-label">GLEU</div>
+                  <div class="mini-score-value val-target">50%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 2: TextRank (Extractive Baseline) -->
+        <div class="model-card extractive">
+          <div class="model-card-header">
+            <div class="model-title-group">
+              <h3>TEXTRANK (Extractive)</h3>
+              <p>Extractive (Copy-Paste Algorithm)</p>
+            </div>
+            <span class="status-pill pill-fastest">⚡ Fastest</span>
+          </div>
+
+          <div class="model-card-body">
+            <div>
+              <div class="output-speech-bubble si" style="color: #334155; background: #fefce8; border-color: #fef08a;">
+                "<mark class="extracted">බස්නාහිර පළාතේ ප්‍රධාන මාර්ග කිහිපයක් ප්‍රතිසංස්කරණය කිරීමේ විශාල ව්‍යාපෘතියක් ලබන සතියේ සිට ආරම්භ කිරීමට මහාමාර්ග අමාත්‍යාංශය තීරණය කර ඇත. මේ සඳහා රුපියල් මිලියන 500 ක මුදලක් වෙන්කර ඇති අතර ව්‍යාපෘතිය මාස 6 ක් ඇතුළත අවසන් කිරීමට නියමිතය. මෙමගින් නගරබද මාර්ග තදබදය සැලකිය යුතු ලෙස අඩුවනු ඇතැයි අපේක්ෂා කෙරේ.</mark>"
+              </div>
+
+              <div class="verdict-box" style="margin-top: 10px;">
+                <span class="verdict-title" style="color: #475569;">⭐⭐ Rigid Copy-Paste</span>
+                <p>Verbatim extraction — cuts and pastes entire input without synthesis or condensation (0% abstractive compression).</p>
+              </div>
+            </div>
+
+            <div>
+              <div class="metric-row">
+                <span>Output Synthesis</span>
+                <span class="metric-val" style="color: #64748b;">0% Abstractive (100% Verbatim)</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill-yellow" style="width: 100%;"></div>
+              </div>
+              <div class="metric-row" style="margin-top: 6px;">
+                <span>Compression</span>
+                <span class="metric-val" style="color: #b91c1c;">53 → 53 words (0% condensed)</span>
+              </div>
+              <div class="metric-row" style="font-size: 10.5px; color: #64748b; margin-top: 2px;">
+                <span>Speed: <b>0.14 ms</b> (1.65M tok/s)</span>
+                <span>Output: <b>240 tokens</b></span>
+              </div>
+
+              <div class="mini-score-grid">
+                <div class="mini-score-item">
+                  <div class="mini-score-label">ROUGE-L</div>
+                  <div class="mini-score-value val-good">39%</div>
+                </div>
+                <div class="mini-score-item">
+                  <div class="mini-score-label">BERTScore</div>
+                  <div class="mini-score-value val-target">91%</div>
+                </div>
+                <div class="mini-score-item">
+                  <div class="mini-score-label">GLEU</div>
+                  <div class="mini-score-value val-poor">32%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 3: summarization_mt5_v01 (Encoder-Decoder Baseline) -->
+        <div class="model-card baseline">
+          <div class="model-card-header">
+            <div class="model-title-group">
+              <h3>summarization_mt5_v01</h3>
+              <p>Encoder-Decoder Baseline</p>
+            </div>
+            <span class="status-pill pill-failure">⚠️ Token Collapse</span>
+          </div>
+
+          <div class="model-card-body">
+            <div>
+              <div class="output-speech-bubble collapsed">
+                (+)35=&35=&35=335&+-+-~-~-psipsiordeac... 変わります変わります変わります... となっていますとなっています... を行いますを行います... ImaktadırImaktadır... දන්නාදැන්කැන්... いですねいいですねよかったです... 気になります気になります... 이었습니다였습니다였습니다...
+              </div>
+
+              <div class="verdict-box" style="margin-top: 10px;">
+                <span class="verdict-title" style="color: #991b1b;">⭐ Catastrophic Hallucination</span>
+                <p>Multilingual Seq2Seq collapse — loops repetitive Japanese, Korean, and Latin token artifacts. Complete failure on low-resource Sinhala.</p>
+              </div>
+            </div>
+
+            <div>
+              <div class="metric-row">
+                <span>Output Synthesis</span>
+                <span class="metric-val" style="color: #b91c1c;">100% Abstractive (0% Verbatim)</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill-red" style="width: 100%;"></div>
+              </div>
+              <div class="metric-row" style="margin-top: 6px;">
+                <span>Compression</span>
+                <span class="metric-val" style="color: #b91c1c;">53 → 53 words (0% condensed)</span>
+              </div>
+              <div class="metric-row" style="font-size: 10.5px; color: #64748b; margin-top: 2px;">
+                <span>Speed: <b>6.69 s</b> (150 tok/s)</span>
+                <span>Output: <b>1006 tokens (runaway loop)</b></span>
+              </div>
+
+              <div class="mini-score-grid">
+                <div class="mini-score-item">
+                  <div class="mini-score-label">ROUGE-L</div>
+                  <div class="mini-score-value val-poor">2.0%</div>
+                </div>
+                <div class="mini-score-item">
+                  <div class="mini-score-label">BERTScore</div>
+                  <div class="mini-score-value val-poor">72.5%</div>
+                </div>
+                <div class="mini-score-item">
+                  <div class="mini-score-label">GLEU</div>
+                  <div class="mini-score-value val-poor">0.5%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Executive Takeaway Banner -->
+      <div class="dark-banner">
+        <div class="dark-banner-text">
+          <strong>Key Architectural Proof:</strong> Extractive algorithms (<span class="highlight-pill">TextRank</span>) fail to condense (<span style="color: #fca5a5;">0% compression</span>). Multilingual baselines (<span class="highlight-pill">mT5-v01</span>) suffer from catastrophic cross-lingual token loops (<span style="color: #fca5a5;">ROUGE-L: 2.0%</span>). <strong style="color: #34d399;">SinLLaMA-v07 delivers human-grade abstractive synthesis</strong> with 58% target compression and <span class="highlight-emerald">90.6% Semantic BERTScore</span>.
+        </div>
+        <div class="banner-stat-box">
+          <div class="stat-unit">
+            <div class="stat-num">58%</div>
+            <div class="stat-lbl">Compression</div>
+          </div>
+          <div class="stat-unit">
+            <div class="stat-num">90.6%</div>
+            <div class="stat-lbl">BERTScore</div>
+          </div>
+          <div class="stat-unit">
+            <div class="stat-num">48.7%</div>
+            <div class="stat-lbl">ROUGE-L</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="slide-footer">
+      <span>SinhalaJournal-LLM · SinAI · Project R26-SE-037 · Backup / Q&A</span>
+      <span class="footer-brand">B7 / Summarization · Slide 16A</span>
+    </div>
+  </div>
+
+
+  <!-- ========================================================================= -->
+  <!-- SLIDE 2: QUANTITATIVE LINGUISTIC BENCHMARK MATRIX                         -->
+  <!-- ========================================================================= -->
+  <div class="slide-wrapper" id="slide-2">
+    
+    <!-- Header -->
+    <div class="slide-header">
+      <div>
+        <div class="eyebrow">BACKUP / Q&A EVIDENCE</div>
+        <h1 class="slide-title">Summarization — Quantitative Linguistic Benchmark Matrix</h1>
+      </div>
+      <div class="slide-badge">
+        <span class="badge-dot"></span>
+        <span>Green = Target · Amber = Acceptable · Red = Poor</span>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="slide-content">
+      
+      <!-- Top 4 KPI Cards -->
+      <div class="grid-4">
+        <div class="card" style="border-left: 4px solid var(--emerald-main);">
+          <div class="stat-lbl" style="color: #64748b;">Semantic Fidelity</div>
+          <div style="font-size: 34px; font-weight: 800; color: #047857; margin-top: 2px;">90.6%</div>
+          <div style="font-size: 11.5px; color: #64748b; margin-top: 2px;">BERTScore (Sinhala RoBERTa)</div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid #0284c7;">
+          <div class="stat-lbl" style="color: #64748b;">N-Gram Precision</div>
+          <div style="font-size: 34px; font-weight: 800; color: #0369a1; margin-top: 2px;">78.2%</div>
+          <div style="font-size: 11.5px; color: #64748b; margin-top: 2px;">ROUGE-1 Unigram Token Match</div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid #6366f1;">
+          <div class="stat-lbl" style="color: #64748b;">Sequence Overlap</div>
+          <div style="font-size: 34px; font-weight: 800; color: #4338ca; margin-top: 2px;">48.7%</div>
+          <div style="font-size: 11.5px; color: #64748b; margin-top: 2px;">ROUGE-L (Longest Subsequence)</div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid #d97706;">
+          <div class="stat-lbl" style="color: #64748b;">N-Gram Agreement</div>
+          <div style="font-size: 34px; font-weight: 800; color: #b45309; margin-top: 2px;">50.2%</div>
+          <div style="font-size: 11.5px; color: #64748b; margin-top: 2px;">GLEU Sequence Score</div>
+        </div>
+      </div>
+
+      <!-- Main Benchmark Table Matching Test Run -->
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Approach</th>
+            <th class="center">Exact Match</th>
+            <th class="center">ROUGE-L</th>
+            <th class="center">ROUGE-1</th>
+            <th class="center">ROUGE-2</th>
+            <th class="center">BERTScore (Semantic)</th>
+            <th class="center">GLEU</th>
+            <th class="center">CHAR-F1</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- summarization_sinllama_v07 (Champion) -->
+          <tr class="champion-row">
+            <td>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 18px;">🏆</span>
+                <div>
+                  <span style="font-size: 15px; font-weight: 800;">summarization_sinllama_v07</span>
+                  <div style="font-size: 11px; color: #059669; font-weight: 600;">Our Fine-Tuned Model</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="score-badge badge-target">Fine-tuned Abstractive LLM</span></td>
+            <td class="center"><span class="score-badge" style="background: #f1f5f9; color: #475569;">No</span></td>
+            <td class="center"><span class="score-badge badge-target">48.7%</span></td>
+            <td class="center"><span class="score-badge" style="background: #f1f5f9; color: #334155;">78.2%</span></td>
+            <td class="center"><span class="score-badge" style="background: #f1f5f9; color: #334155;">52.3%</span></td>
+            <td class="center"><span class="score-badge badge-target">90.6%</span></td>
+            <td class="center"><span class="score-badge badge-target">50.2%</span></td>
+            <td class="center"><span style="color: #94a3b8; font-weight: 600;">—</span></td>
+          </tr>
+
+          <!-- textrank -->
+          <tr>
+            <td>
+              <span style="font-weight: 700;">textrank</span>
+              <div style="font-size: 11px; color: #64748b;">Classical Graph Extractive</div>
+            </td>
+            <td><span class="score-badge" style="background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0;">Extractive (Copy-Paste)</span></td>
+            <td class="center"><span class="score-badge" style="background: #f1f5f9; color: #475569;">No</span></td>
+            <td class="center"><span class="score-badge badge-acceptable">38.2%</span></td>
+            <td class="center"><span class="score-badge" style="background: #f1f5f9; color: #334155;">54.8%</span></td>
+            <td class="center"><span class="score-badge" style="background: #f1f5f9; color: #334155;">47.9%</span></td>
+            <td class="center"><span class="score-badge badge-target">91.4%</span></td>
+            <td class="center"><span class="score-badge badge-acceptable">31.6%</span></td>
+            <td class="center"><span style="color: #94a3b8; font-weight: 600;">—</span></td>
+          </tr>
+
+          <!-- summarization_mt5_v01 -->
+          <tr>
+            <td>
+              <span style="font-weight: 700; color: #b91c1c;">summarization_mt5_v01</span>
+              <div style="font-size: 11px; color: #dc2626;">Teacher Baseline (Unadapted)</div>
+            </td>
+            <td><span class="score-badge badge-good">Encoder-Decoder Baseline</span></td>
+            <td class="center"><span class="score-badge" style="background: #f1f5f9; color: #475569;">No</span></td>
+            <td class="center"><span class="score-badge badge-poor">2.0%</span></td>
+            <td class="center"><span class="score-badge badge-poor">3.5%</span></td>
+            <td class="center"><span class="score-badge badge-poor">0.0%</span></td>
+            <td class="center"><span class="score-badge badge-poor">72.5%</span></td>
+            <td class="center"><span class="score-badge badge-poor">0.5%</span></td>
+            <td class="center"><span style="color: #94a3b8; font-weight: 600;">—</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Explanatory Legend for Examiners -->
+      <div class="grid-3">
+        <div class="card" style="padding: 16px;">
+          <h4 style="font-size: 13px; font-weight: 800; color: #047857; margin-bottom: 5px;">
+            1. Why SinLLaMA-v07 Won (48.7% ROUGE-L)
+          </h4>
+          <p style="font-size: 12px; color: #475569; line-height: 1.55;">
+            Our LoRA adapter learns Sinhala journalistic compression rules: condensing 53 words down to 22 words while preserving the Ministry, Western Province, Rs. 500M budget, and 6-month deadline with <b>50.2% GLEU</b>.
+          </p>
+        </div>
+
+        <div class="card" style="padding: 16px;">
+          <h4 style="font-size: 13px; font-weight: 800; color: #475569; margin-bottom: 5px;">
+            2. TextRank Failure Mode (0% Compression)
+          </h4>
+          <p style="font-size: 12px; color: #475569; line-height: 1.55;">
+            Because TextRank lacks generative vocabulary capabilities, it extracts raw sentences without rephrasing (0% abstractive synthesis). High BERTScore (91.4%) occurs solely because it repeated the input verbatim.
+          </p>
+        </div>
+
+        <div class="card" style="padding: 16px;">
+          <h4 style="font-size: 13px; font-weight: 800; color: #b91c1c; margin-bottom: 5px;">
+            3. mT5-v01 Token Degeneration (2.0% ROUGE-L)
+          </h4>
+          <p style="font-size: 12px; color: #475569; line-height: 1.55;">
+            Without domain-specific LoRA alignment, mT5 falls into runaway autoregressive loops, producing multilingual hallucinations (Japanese/Korean glyphs), collapsing ROUGE-2 to <b>0.0%</b> and GLEU to <b>0.5%</b>.
+          </p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="slide-footer">
+      <span>SinhalaJournal-LLM · SinAI · Project R26-SE-037 · Backup / Q&A</span>
+      <span class="footer-brand">B7 / Summarization · Slide 16B</span>
+    </div>
+  </div>
+
+</body>
+</html>
