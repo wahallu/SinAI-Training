@@ -1,0 +1,127 @@
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+🦥 Unsloth Zoo will now patch everything to make training faster!
+Frozen split manifest: seed=42 source_sha256=2d1f21ee3ca1...
+Frozen eval-subset articles: 30 (of 300 total in the frozen file)
+Evaluating 30 articles x 3 lengths = 90 generations
+
+🔹 Loading tokenizer...
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+🔹 Loading SinLLaMA base (4-bit)...
+==((====))==  Unsloth 2026.4.6: Fast Llama patching. Transformers: 4.57.6.
+   \\   /|    NVIDIA A40. Num GPUs = 1. Max memory: 44.352 GB. Platform: Linux.
+O^O/ \_/ \    Torch: 2.6.0+cu124. CUDA: 8.6. CUDA Toolkit: 12.4. Triton: 3.2.0
+\        /    Bfloat16 = TRUE. FA [Xformers = None. FA2 = False]
+ "-____-"     Free license: http://github.com/unslothai/unsloth
+Unsloth: Fast downloading is enabled - ignore downloading bars which are red colored!
+/home/jovyan/work/sinllama/models/SinLLaMA-merged-base does not have a padding token! Will use pad_token = <|reserved_special_token_250|>.
+🔹 Attaching summarization LoRA adapter (v06)...
+   Model ready ✅
+
+[  1/30] short   ratio=0.17 ✓band ✓end ✓clean ✓unit R-L=0.342 (4.9s)
+[  1/30] medium  ratio=0.31 ✓band ✓end ✓clean ✓unit R-L=0.461 (6.3s)
+[  1/30] long    ratio=0.43 ✓band ✓end ✓clean ✓unit R-L=0.499 (9.7s)
+[  2/30] short   ratio=0.12 ✓band ✓end ✓clean ✓unit R-L=0.515 (4.0s)
+[  2/30] medium  ratio=0.22 ✓band ✓end ✓clean ✓unit R-L=0.234 (6.3s)
+[  2/30] long    ratio=0.32 ✓band ✓end ✓clean ✓unit R-L=0.448 (9.7s)
+[  3/30] short   ratio=0.09 ✓band ✓end ✓clean ✓unit R-L=0.854 (3.9s)
+[  3/30] medium  ratio=0.23 ✓band ✓end ✓clean ✓unit R-L=0.402 (6.3s)
+[  3/30] long    ratio=0.48 ✓band ✓end ✓clean ✓unit R-L=0.358 (9.6s)
+[  4/30] short   ratio=0.08 ✓band ✓end ✓clean ✓unit R-L=0.364 (3.9s)
+[  4/30] medium  ratio=0.23 ✓band ✓end ✓clean ✓unit R-L=0.374 (6.3s)
+[  4/30] long    ratio=0.38 ✓band ✓end ✓clean ✓unit R-L=0.459 (9.7s)
+[  5/30] short   ratio=0.09 ✓band ✓end ✓clean ✓unit R-L=0.507 (4.0s)
+[  5/30] medium  ratio=0.20 ✓band ✗end ✓clean ✓unit R-L=0.514 (6.4s)
+[  5/30] long    ratio=0.26 ✓band ✓end ✓clean ✓unit R-L=0.483 (9.7s)
+[  6/30] short   ratio=0.08 ✓band ✓end ✓clean ✓unit R-L=0.390 (4.0s)
+[  6/30] medium  ratio=0.13 ✓band ✓end ✓clean ✓unit R-L=0.380 (6.4s)
+[  6/30] long    ratio=0.23 ✓band ✓end ✓clean ✓unit R-L=0.341 (9.8s)
+[  7/30] short   ratio=0.11 ✓band ✓end ✓clean ✓unit R-L=0.484 (4.0s)
+[  7/30] medium  ratio=0.15 ✓band ✓end ✓clean ✓unit R-L=0.373 (6.4s)
+[  7/30] long    ratio=0.20 ✗band ✓end ✓clean ✓unit R-L=0.380 (9.7s)
+[  8/30] short   ratio=0.12 ✓band ✓end ✓clean ✓unit R-L=0.351 (3.9s)
+[  8/30] medium  ratio=0.25 ✓band ✓end ✓clean ✓unit R-L=0.482 (6.3s)
+[  8/30] long    ratio=0.42 ✓band ✓end ✓clean ✓unit R-L=0.462 (9.6s)
+[  9/30] short   ratio=0.22 ✗band ✓end ✓clean ✓unit R-L=0.388 (3.9s)
+[  9/30] medium  ratio=0.30 ✓band ✓end ✓clean ✓unit R-L=0.412 (6.3s)
+[  9/30] long    ratio=0.37 ✓band ✓end ✓clean ✓unit R-L=0.480 (9.6s)
+[ 10/30] short   ratio=0.12 ✓band ✓end ✓clean ✓unit R-L=0.330 (4.0s)
+[ 10/30] medium  ratio=0.22 ✓band ✓end ✓clean ✓unit R-L=0.371 (6.3s)
+[ 10/30] long    ratio=0.29 ✓band ✓end ✓clean ✓unit R-L=0.400 (9.6s)
+[ 11/30] short   ratio=0.11 ✓band ✓end ✓clean ✓unit R-L=0.424 (4.0s)
+[ 11/30] medium  ratio=0.23 ✓band ✓end ✓clean ✓unit R-L=0.364 (6.3s)
+[ 11/30] long    ratio=0.35 ✓band ✓end ✓clean ✓unit R-L=0.431 (9.6s)
+[ 12/30] short   ratio=0.12 ✓band ✓end ✓clean ✓unit R-L=0.456 (3.9s)
+[ 12/30] medium  ratio=0.18 ✓band ✓end ✓clean ✓unit R-L=0.417 (6.3s)
+[ 12/30] long    ratio=0.25 ✓band ✓end ✓clean ✓unit R-L=0.446 (9.7s)
+[ 13/30] short   ratio=0.08 ✓band ✓end ✓clean ✓unit R-L=0.749 (3.9s)
+[ 13/30] medium  ratio=0.22 ✓band ✓end ✓clean ✓unit R-L=0.537 (6.3s)
+[ 13/30] long    ratio=0.32 ✓band ✓end ✓clean ✓unit R-L=0.453 (9.6s)
+[ 14/30] short   ratio=0.13 ✓band ✓end ✓clean ✓unit R-L=0.509 (3.9s)
+[ 14/30] medium  ratio=0.19 ✓band ✓end ✓clean ✓unit R-L=0.385 (6.3s)
+[ 14/30] long    ratio=0.28 ✓band ✓end ✓clean ✓unit R-L=0.351 (9.6s)
+[ 15/30] short   ratio=0.10 ✓band ✓end ✓clean ✓unit R-L=0.505 (3.9s)
+[ 15/30] medium  ratio=0.18 ✓band ✓end ✓clean ✓unit R-L=0.384 (6.3s)
+[ 15/30] long    ratio=0.43 ✓band ✓end ✓clean ✓unit R-L=0.383 (9.6s)
+[ 16/30] short   ratio=0.09 ✓band ✓end ✓clean ✓unit R-L=0.461 (4.0s)
+[ 16/30] medium  ratio=0.21 ✓band ✓end ✓clean ✓unit R-L=0.480 (6.3s)
+[ 16/30] long    ratio=0.27 ✓band ✓end ✓clean ✓unit R-L=0.410 (9.6s)
+[ 17/30] short   ratio=0.13 ✓band ✓end ✓clean ✓unit R-L=0.384 (3.9s)
+[ 17/30] medium  ratio=0.25 ✓band ✓end ✓clean ✓unit R-L=0.527 (6.3s)
+[ 17/30] long    ratio=0.34 ✓band ✓end ✓clean ✓unit R-L=0.437 (9.6s)
+[ 18/30] short   ratio=0.13 ✓band ✓end ✓clean ✓unit R-L=0.380 (3.9s)
+[ 18/30] medium  ratio=0.18 ✓band ✓end ✓clean ✓unit R-L=0.479 (6.3s)
+[ 18/30] long    ratio=0.33 ✓band ✓end ✓clean ✓unit R-L=0.509 (9.6s)
+[ 19/30] short   ratio=0.15 ✓band ✓end ✓clean ✓unit R-L=0.424 (3.9s)
+[ 19/30] medium  ratio=0.29 ✓band ✓end ✓clean ✓unit R-L=0.549 (6.3s)
+[ 19/30] long    ratio=0.36 ✓band ✓end ✓clean ✓unit R-L=0.534 (9.6s)
+[ 20/30] short   ratio=0.13 ✓band ✓end ✓clean ✓unit R-L=0.457 (4.0s)
+[ 20/30] medium  ratio=0.21 ✓band ✓end ✓clean ✓unit R-L=0.518 (6.3s)
+[ 20/30] long    ratio=0.33 ✓band ✓end ✓clean ✓unit R-L=0.481 (9.6s)
+[ 21/30] short   ratio=0.10 ✓band ✓end ✓clean ✓unit R-L=0.405 (3.9s)
+[ 21/30] medium  ratio=0.16 ✓band ✓end ✓clean ✓unit R-L=0.452 (6.3s)
+[ 21/30] long    ratio=0.28 ✓band ✗end ✓clean ✓unit R-L=0.362 (9.7s)
+[ 22/30] short   ratio=0.13 ✓band ✓end ✓clean ✓unit R-L=0.566 (3.9s)
+[ 22/30] medium  ratio=0.21 ✓band ✓end ✓clean ✓unit R-L=0.476 (6.3s)
+[ 22/30] long    ratio=0.38 ✓band ✓end ✓clean ✓unit R-L=0.546 (9.6s)
+[ 23/30] short   ratio=0.11 ✓band ✓end ✓clean ✓unit R-L=0.475 (3.9s)
+[ 23/30] medium  ratio=0.26 ✓band ✓end ✓clean ✓unit R-L=0.430 (6.3s)
+[ 23/30] long    ratio=0.37 ✓band ✓end ✓clean ✓unit R-L=0.514 (9.6s)
+[ 24/30] short   ratio=0.23 ✗band ✓end ✓clean ✓unit R-L=0.429 (3.9s)
+[ 24/30] medium  ratio=0.23 ✓band ✓end ✓clean ✓unit R-L=0.447 (6.3s)
+[ 24/30] long    ratio=0.59 ✗band ✓end ✓clean ✓unit R-L=0.426 (9.6s)
+[ 25/30] short   ratio=0.10 ✓band ✓end ✓clean ✓unit R-L=0.523 (3.9s)
+[ 25/30] medium  ratio=0.20 ✓band ✓end ✓clean ✓unit R-L=0.477 (6.3s)
+[ 25/30] long    ratio=0.31 ✓band ✓end ✓clean ✓unit R-L=0.505 (9.6s)
+[ 26/30] short   ratio=0.13 ✓band ✓end ✓clean ✓unit R-L=0.267 (3.9s)
+[ 26/30] medium  ratio=0.20 ✓band ✓end ✓clean ✓unit R-L=0.302 (6.3s)
+[ 26/30] long    ratio=0.41 ✓band ✓end ✓clean ✓unit R-L=0.303 (9.7s)
+[ 27/30] short   ratio=0.11 ✓band ✓end ✓clean ✗unit R-L=0.476 (3.9s)
+[ 27/30] medium  ratio=0.26 ✓band ✓end ✓clean ✓unit R-L=0.444 (6.3s)
+[ 27/30] long    ratio=0.40 ✓band ✓end ✓clean ✓unit R-L=0.471 (9.7s)
+[ 28/30] short   ratio=0.10 ✓band ✓end ✓clean ✓unit R-L=0.637 (3.9s)
+[ 28/30] medium  ratio=0.27 ✓band ✓end ✓clean ✓unit R-L=0.547 (6.3s)
+[ 28/30] long    ratio=0.57 ✗band ✓end ✓clean ✓unit R-L=0.542 (9.7s)
+[ 29/30] short   ratio=0.15 ✓band ✓end ✓clean ✓unit R-L=0.437 (4.0s)
+[ 29/30] medium  ratio=0.23 ✓band ✓end ✓clean ✓unit R-L=0.546 (6.3s)
+[ 29/30] long    ratio=0.30 ✓band ✓end ✓clean ✓unit R-L=0.473 (9.7s)
+[ 30/30] short   ratio=0.16 ✓band ✓end ✓clean ✓unit R-L=0.621 (3.9s)
+[ 30/30] medium  ratio=0.30 ✓band ✓end ✓clean ✓unit R-L=0.675 (6.3s)
+[ 30/30] long    ratio=0.72 ✗band ✓end ✓clean ✓unit R-L=0.543 (9.6s)
+
+🔹 Scoring BERTScore (xlm-roberta-large, batch=32, device=cuda)...
+   short   BERTScore-F1 = 0.9118 (30 samples)
+   medium  BERTScore-F1 = 0.9071 (30 samples)
+   long    BERTScore-F1 = 0.9039 (30 samples)
+
+============================================================================
+  v06_frozensplit — FROZEN EVAL SUBSET SUMMARY (leakage-controlled)
+============================================================================
+bucket      R-L    R-1    R-2   BS-P   BS-R  BS-F1  ratio  in-band  clean-end   glue   unit
+short     0.470  0.708  0.439  0.910  0.914  0.912   0.12      93%       100%     0%     3%
+medium    0.448  0.749  0.474  0.906  0.908  0.907   0.22     100%        97%     0%     0%
+long      0.448  0.787  0.525  0.905  0.902  0.904   0.37      87%        97%     0%     0%
+
+Length modes separated (short < medium < long): YES ✓
+  short=0.12  medium=0.22  long=0.37
+
+Detailed results: /home/jovyan/summarizer/6_eval_results/frozensplit_v06_eval_20260828_194413.json

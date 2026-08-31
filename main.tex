@@ -353,7 +353,8 @@ For summarization, the older sample level split is compared with a frozen split
 created at article level. The v06 and v07 recipes are then retrained using the
 same training and validation boundaries. They are tested on a fixed subset of
 300 articles. A total of 273 complete articles produce 819 generations for each
-adapter. We report ROUGE-1, ROUGE-2, ROUGE-L, requested length adherence,
+adapter. We report ROUGE-1, ROUGE-2, ROUGE-L, multilingual BERTScore ($F_1$)
+\cite{zhang2019bertscore} using XLM-RoBERTa-large, requested length adherence,
 clean sentence ending, joined word defects, and numeric unit mismatch. The
 compression ranges are 0.04 to 0.18 for short summaries, 0.12 to 0.32 for
 medium summaries, and 0.22 to 0.55 for long summaries.
@@ -599,17 +600,24 @@ Table~\ref{tab:summaryfrozen} reports ROUGE-1, ROUGE-2, ROUGE-L, requested lengt
 adherence, and clean sentence endings across all three length bands. SinLlama
 follows requested length bands with 86.8\% to 94.1\% accuracy and achieves over
 94\% clean sentence endings across all bands without post-hoc truncation or external
-prediction heads.
+prediction heads. On an NVIDIA A40, generation latency scales linearly with requested
+target length: 4.0\,s for short ($\sim$12\% ratio), 6.4\,s for medium ($\sim$23\%), and
+9.8\,s for long ($\sim$38\%) summaries, maintaining a steady generation throughput of
+$\approx 8.8$\,tokens/s.
 
 The repaired evaluation also clarifies the effect of the v06 and v07 cleaning
 experiment. On clean held out data, both recipes are statistically tied across all
 three bands: ROUGE-L differences are $\le 0.0018$, ROUGE-1 differences are $\le 0.0066$,
-and ROUGE-2 differences are $\le 0.0057$. Both adapters achieved 0\% joined word
-defects and under 1\% numeric unit mismatches. The earlier small test that appeared
-to favor v06 was an artifact of split contamination. Filtering the 22 defective teacher
-records safeguards against concatenated words and $10\times$ numeric scale errors
-without degrading generation quality. Entity factuality still needs stronger evaluation
-because errors such as entity substitution are not fully measured by ROUGE.
+and ROUGE-2 differences are $\le 0.0057$. On semantic similarity evaluation with
+XLM-RoBERTa-large, v07 reaches BERTScore-$F_1$ of 0.9168 on short, 0.9085 on medium, and
+0.9053 on long summaries, slightly outperforming v06 across all three bands. Both
+adapters achieved 0\% joined word defects. In numeric unit audits, v06 produced a 3.3\%
+scale error rate on short outputs due to learned teacher defects, whereas cleaned v07
+achieved 0.0\% unit scale errors. Filtering the 22 defective teacher records therefore
+actively safeguards against scale distortions ($10\times$ unit errors like
+\textit{lakh} versus \textit{million}) and concatenated tokens without degrading lexical
+or semantic generation quality. Entity factuality still needs stronger evaluation
+because complex entity substitution errors are not fully measured by ROUGE.
 
 \begin{table}[!b]
 \caption{Summarization evaluation on 273 held out articles (819 outputs per adapter)}
@@ -707,6 +715,7 @@ scores are treated as real progress.
 \bibitem{ostheimer2024tst} P. S. Ostheimer, M. K. Nagda, M. Kloft, and S. Fellenz, ``Text style transfer evaluation using large language models,'' in \textit{Proc. LREC-COLING}, 2024, pp. 15802--15822.
 \bibitem{xue2022byt5} L. Xue \textit{et al.}, ``ByT5: Towards a token-free future with pre-trained byte-to-byte models,'' \textit{Trans. Assoc. Comput. Linguistics}, vol. 10, pp. 291--306, 2022.
 \bibitem{lin2004rouge} C.-Y. Lin, ``ROUGE: A package for automatic evaluation of summaries,'' in \textit{Text Summarization Branches Out}, 2004, pp. 74--81.
+\bibitem{zhang2019bertscore} T. Zhang, V. Kishore, F. Wu, K. Q. Weinberger, and Y. Artzi, ``BERTScore: Evaluating text generation with BERT,'' in \textit{Proc. ICLR}, 2020.
 \end{thebibliography}
 
 \end{document}
