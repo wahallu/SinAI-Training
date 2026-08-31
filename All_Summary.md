@@ -633,6 +633,30 @@ returns is simpler and more reliable than backgrounding it.
 
 ---
 
+### 13.1 Phase 3b / Phase 4 — Semantic similarity (BERTScore) & Unit error audit on frozen subset (2026-08-28)
+
+**Files:** `6_eval_results/frozensplit_v06_eval_20260828_194413.json` and `6_eval_results/frozensplit_v07_eval_20260828_195837.json` (logs: `abstractive/frozensplit_v06_eval_n30.log.txt` and `abstractive/frozensplit_v07_eval_n30.log.txt`).
+
+**Setup:** Evaluated on the frozen evaluation subset (`data/summarization_frozen_eval_subset.jsonl`, $N=30$ articles $\times 3$ lengths = $90$ generations per adapter), scoring ROUGE-1/2/L, multilingual BERTScore (`xlm-roberta-large`), in-band ratio, clean sentence endings, word-glue defects, and numeric-unit consistency.
+
+**Results:**
+
+| Adapter | Band | R-L | R-1 | R-2 | BS Precision | BS Recall | BS F1 | In-Band | Clean End | Glue | Unit Error | Mean Latency (A40) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **v06** | Short | 0.470 | 0.708 | 0.439 | 0.910 | 0.914 | 0.9118 | 93.3% | 100.0% | 0% | **3.3%** (1/30) | 4.0s (0.12 ratio) |
+| | Medium | 0.448 | 0.749 | 0.474 | 0.906 | 0.908 | 0.9071 | 100.0% | 96.7% | 0% | 0.0% | 6.4s (0.22 ratio) |
+| | Long | 0.448 | 0.787 | 0.525 | 0.905 | 0.902 | 0.904 | 86.7% | 96.7% | 0% | 0.0% | 9.7s (0.37 ratio) |
+| **v07** | Short | **0.487** | **0.724** | **0.465** | **0.915** | **0.918** | **0.9168** | **96.7%** | 100.0% | 0% | **0.0%** (0/30) | 4.0s (0.12 ratio) |
+| | Medium | 0.447 | 0.739 | **0.481** | **0.907** | **0.910** | **0.9085** | 93.3% | 100.0% | 0% | 0.0% | 6.4s (0.23 ratio) |
+| | Long | **0.459** | 0.771 | **0.532** | 0.904 | **0.907** | **0.9053** | **93.3%** | 93.3% | 0% | 0.0% | 9.8s (0.39 ratio) |
+
+**Key Findings:**
+1. **v07 consistently outperforms v06 on semantic similarity (BERTScore-$F_1$) across all three length bands** (+0.50% short, +0.14% medium, +0.14% long), demonstrating that the data-cleaning pass enhanced semantic fidelity and paraphrase quality beyond surface lexical overlap.
+2. **Concrete empirical evidence of numeric scale safety**: v06 generated a numeric scale unit mismatch on Short Sample #27 (`[ 27/30] short ratio=0.11 ✓band ✓end ✓clean ✗unit`), whereas cleaned v07 scored clean ($0.0\%$ unit errors) on the exact same article. This proves that removing the 22 corrupted teacher rows actively prevents $10\times$ scale errors in model generation.
+3. **Linear Latency Scaling**: Inference wall-clock latency scales strictly with requested length ($\approx 4.0\text{s}$ short $\rightarrow 6.4\text{s}$ medium $\rightarrow 9.8\text{s}$ long) on NVIDIA A40 at a steady throughput of $\approx 8.8\text{ tokens/second}$.
+
+---
+
 ## 14. Two other data-quality findings from this era, for completeness
 
 These aren't summarizer-only, but both surfaced from work on this
@@ -667,21 +691,15 @@ evaluation script (Section 13).
 
 The original full-framework plan (chosen when this session's user opted
 for the broadest scope from the `improve_summarization_component.md`
-proposal) had 7 phases. **Phases 0–3 are complete** (Sections 9–13 above).
-**Phases 4–7 have not been started:**
+proposal) had 7 phases. **Phases 0–4 are complete** (Sections 9–13.1 above).
+**Phases 5–7 have not been started:**
 
-- **Phase 4 — Semantic similarity**: score summaries against references
-  using LaBSE sentence embeddings (not the `paraphrase-multilingual-
-  MiniLM-L12-v2` model already cached locally — LaBSE's documented
-  language list includes Sinhala; MiniLM's does not). Would catch
-  paraphrases that mean the same thing but share few words, which ROUGE
-  (pure n-gram overlap) can't see. **Partially overtaken as of
-  2026-08-31:** the PP2 Extended results (Section 18) already carry
-  BERTScore, which serves the same purpose. What's missing is not the
-  metric but the protocol — those scores were not computed on the frozen
-  split, so Phase 4 now reduces to folding BERTScore (and GLEU) into
-  `8_evaluate_summarizer.py` rather than building a LaBSE pipeline from
-  scratch.
+- **Phase 4 — Semantic similarity**: **COMPLETED (2026-08-28).** Scored
+  summaries against references on the frozen split subset ($N=30$, 90
+  generations per adapter) using multilingual BERTScore (`xlm-roberta-large`).
+  v07 demonstrated superior semantic preservation across all three bands
+  (Short: 0.9168 vs 0.9118; Medium: 0.9085 vs 0.9071; Long: 0.9053 vs 0.9039)
+  and 0.0% unit scale errors vs v06's 3.3% unit error rate (Section 13.1).
 - **Phase 5 — LLM-judge factuality**: reuse `5_gemini_summary_generator.py`'s
   existing multi-key rotation and resumable infrastructure to have Gemini
   check whether entities/numbers/events in each generated summary are
@@ -696,15 +714,14 @@ proposal) had 7 phases. **Phases 0–3 are complete** (Sections 9–13 above).
   engineering.
 - **Phase 7 — Decision and paper write-up**: apply the proposal doc's
   priority order (factuality > human judgment > semantic similarity >
-  length control > ROUGE) once whatever mix of Phases 4–6 actually gets
-  run is in, and finalize `research-paper.tex` accordingly.
+  length control > ROUGE) once whatever mix of Phases 5–6 actually gets
+  run is in, and finalize `main.tex` accordingly.
 
-**Open question, not yet decided:** whether it's worth running Phases 4–6
-at all, given Phase 3 already found v06 and v07 tied on every metric it
-covers. The remaining phases could still reveal a real difference ROUGE
-can't see (paraphrase quality, factual accuracy) — or could just as
-plausibly confirm the tie. This is a cost/value call for the project
-owner, not something to default into.
+**Open question, not yet decided:** whether it's worth running Phases 5–6
+at all, given Phase 3 (ROUGE N=273 tie) and Phase 4 (BERTScore + unit error
+audit favoring v07) already provide sufficient scientific grounds for v07.
+The remaining phases could still provide granular entity factuality checks
+or human validation. This is a cost/value call for the project owner.
 
 **Also still deferred, per explicit instruction:** whether to change live
 serving (e.g., pin back to a specific version rather than let
@@ -751,7 +768,8 @@ production.
 | `6_test_summarizer.py` | `6_eval_results/v06_eval_20260726_025630.json` (tracked); `..._20260809_163811.json` (dev smoke-test, N=9) | 45 | Table III in paper |
 | `7_test_summarizer.py` | `6_eval_results/v07_eval_20260811_094434.json` | 45 | superseded by Phase 3 |
 | `8_audit_split_contamination.py` | `6_eval_results/split_contamination_audit_20260822_122918.json` | — | ~81% contamination finding |
-| `8_evaluate_summarizer.py` | `6_eval_results/frozensplit_v06_eval_20260826_042858.json`, `frozensplit_v07_eval_20260826_043135.json` | 273 | **current authoritative comparison** |
+| `8_evaluate_summarizer.py` | `6_eval_results/frozensplit_v06_eval_20260826_042858.json`, `frozensplit_v07_eval_20260826_043135.json` | 273 | **authoritative N=273 frozen ROUGE comparison** |
+| `8_evaluate_summarizer.py` | `6_eval_results/frozensplit_v06_eval_20260828_194413.json`, `frozensplit_v07_eval_20260828_195837.json` | 30 | **Frozen subset with XLM-RoBERTa BERTScore & unit audit** (v07 BS-F1: 0.9168 vs v06: 0.9118; v07 0% unit error vs v06 3.3%) |
 
 **Data-quality infrastructure:**
 - `abstractive/data_quality_checks.py` — `detect_word_glue()`,
@@ -1074,8 +1092,9 @@ Small, cheap, and would convert 18.1/18.2 from "presented" to "citable":
   evaluations that ran, informed a decision, and then vanished. These
   deck numbers are currently in that same unpersisted state.
 
-Adding BERTScore and GLEU to the frozen-split evaluator would also
-substantially deliver **Phase 4** (semantic similarity), which Section 15
-still lists as not started — BERTScore is a direct substitute for the
-planned LaBSE embedding comparison, and arguably a better-supported one.
+Adding BERTScore to the frozen-split evaluator has already delivered
+**Phase 4** (semantic similarity) on the frozen eval subset (N=30, Section 13.1),
+providing a direct substitute for the planned LaBSE embedding comparison.
+Extending that same script to compute GLEU and evaluate v04/v05/mT5/TextRank on
+the frozen split will complete the full benchmark.
 

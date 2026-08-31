@@ -582,15 +582,18 @@ SentencePiece tokenizers, leading to degenerate generation on Sinhala news text
 vocabulary provides fluent abstractive synthesis (ROUGE-L of 0.457--0.508 on held out
 data) and native prompt-driven length control.
 
-The original v06 and v07 comparison used 15 corpus articles and three requested
-lengths. A later audit reconstructed the training process and found that about
-81\% of articles in the nominal held out set had already appeared in training
-under another length variant. The original process first expanded each article
-into short, medium, and long examples and then shuffled those examples before
-splitting. An article stays completely outside training only when all three
-variants enter the 15\% validation partition. The probability is
-$P = 0.15^3 \approx 0.34\%$. Very high contamination is therefore the expected
-result of this sample level split.
+An early exploratory evaluation of v06 and v07 evaluated 15 sample-expanded
+articles (45 generations per model) drawn from the un-frozen corpus, which
+initially appeared to show v06 outperforming v07 (e.g., short ROUGE-L of
+0.616 versus 0.488). However, a subsequent data audit reconstructed the sample
+preparation pipeline and revealed that this preliminary result was severely
+distorted by data leakage: about 81\% of articles in the nominal held out set
+had already appeared in training under another length variant. The legacy
+process first expanded each article into short, medium, and long examples and
+then shuffled those examples before splitting. An article stays completely
+outside training only when all three variants enter the 15\% validation partition.
+The probability is $P = 0.15^3 \approx 0.34\%$. Very high contamination is
+therefore the expected result of this sample level split.
 
 To remove this problem, we created an 80/10/10 split at article level and
 retrained both the raw v06 recipe and the cleaned v07 recipe using the same
