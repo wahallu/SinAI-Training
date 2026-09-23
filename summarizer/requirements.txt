@@ -11,6 +11,10 @@ torch>=2.1.0
 tqdm>=4.66.0
 numpy>=1.26.0
 
+# Multilingual BERTScore (xlm-roberta-large) — 8_evaluate_summarizer.py
+# and work/serve_sinai.py's /compare endpoint.
+bert-score>=0.3.13
+
 # Gemini API Support
 google-genai>=0.3.0
 python-dotenv>=1.0.1

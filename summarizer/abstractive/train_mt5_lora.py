@@ -19,6 +19,8 @@ import argparse
 import json
 import os
 import random
+import unicodedata
+from collections import Counter
 from pathlib import Path
 
 # Bypass incompatible torchao 0.8.0 check inside peft across all modules
@@ -62,7 +64,6 @@ from transformers import (
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
 )
-import evaluate
 
 
 # ─────────────────────────────────────────────
@@ -75,7 +76,7 @@ DEFAULT_MODEL_PATH = "/home/jovyan/summarizer/models/mt5-base"
 FALLBACK_MODEL_PATH = "google/mt5-base"
 
 DEFAULT_TRAIN_DATA = "/home/jovyan/summarizer/data/5_qwen_summaries.jsonl"
-DEFAULT_OUTPUT_ADAPTER = "/home/jovyan/work/sinllama/models/adapters/summarization_mt5_v01"
+DEFAULT_OUTPUT_ADAPTER = "/home/jovyan/work/sinllama/models/adapters/summarization_mt5_v02"
 
 PREFIX = "summarize: "
 MAX_INPUT_LEN = 512
@@ -115,6 +116,37 @@ def get_base_model_path() -> str:
             return path
     print(f"[INFO] Local mT5 model not found in candidates. Falling back to HF: {FALLBACK_MODEL_PATH}")
     return FALLBACK_MODEL_PATH
+
+
+def _patch_t5_special_tokens_bug():
+    """Works around a transformers-internal bug also patched in
+    work/serve_sinai.py's _patch_t5_special_tokens_bug():
+
+        AttributeError: 'list' object has no attribute 'keys'
+        at tokenization_utils_base.py, _set_model_specific_special_tokens()
+
+    mT5's fast tokenizer passes its <extra_id_N> sentinel tokens (a list)
+    into PreTrainedTokenizerBase.__init__, which the installed transformers
+    version routes into _set_model_specific_special_tokens() unconditionally
+    instead of only for dict values, crashing on `.keys()`. That method only
+    registers named model-specific tokens (e.g. an image_token for
+    multimodal models) -- mT5 has none, so coercing a non-dict argument to
+    {} here is a safe no-op."""
+    try:
+        from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+        if getattr(PreTrainedTokenizerBase._set_model_specific_special_tokens, "_t5_patched", False):
+            return
+        original = PreTrainedTokenizerBase._set_model_specific_special_tokens
+
+        def _safe_set_model_specific_special_tokens(self, special_tokens):
+            if not isinstance(special_tokens, dict):
+                special_tokens = {}
+            return original(self, special_tokens)
+        _safe_set_model_specific_special_tokens._t5_patched = True
+
+        PreTrainedTokenizerBase._set_model_specific_special_tokens = _safe_set_model_specific_special_tokens
+    except Exception as exc:
+        print(f"[WARN] Could not apply T5 special-tokens compatibility patch: {type(exc).__name__}: {exc}")
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -197,23 +229,100 @@ class QwenSummarizationDataset(TorchDataset):
         return model_inputs
 
 
-def make_compute_metrics(tokenizer):
-    rouge = evaluate.load("rouge")
+def sinhala_tokenize(text: str) -> list[str]:
+    """Character-level tokenizer for Sinhala (Unicode grapheme clusters).
+    Ported verbatim from work/serve_sinai.py's sinhala_tokenize() so this
+    script's eval and the live /compare endpoint agree on what counts as a
+    token. Standard `evaluate.load("rouge")` tokenizes with an ASCII-only
+    regex ([^a-z0-9]+) and silently strips all Sinhala script, scoring 0.0
+    even on two identical Sinhala strings (verified directly) -- it cannot
+    be used for this dataset."""
+    tokens = []
+    chars = list(text)
+    i = 0
+    while i < len(chars):
+        cluster = chars[i]
+        i += 1
+        while i < len(chars) and unicodedata.combining(chars[i]):
+            cluster += chars[i]
+            i += 1
+        if cluster.strip():
+            tokens.append(cluster)
+    return tokens
 
+
+def sinhala_rouge(pred: str, ref: str) -> dict:
+    """Grapheme-cluster ROUGE-1/2/L F1 for one pred/ref pair. Ported
+    verbatim from work/serve_sinai.py's rouge_scores()."""
+    def ngrams(tokens, n):
+        return Counter(tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1))
+
+    def lcs_length(a, b):
+        m, n = len(a), len(b)
+        prev = [0] * (n + 1)
+        curr = [0] * (n + 1)
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if a[i - 1] == b[j - 1]:
+                    curr[j] = prev[j - 1] + 1
+                else:
+                    curr[j] = max(prev[j], curr[j - 1])
+            prev, curr = curr, [0] * (n + 1)
+        return prev[n]
+
+    pred_toks = sinhala_tokenize(pred)
+    ref_toks = sinhala_tokenize(ref)
+    if not pred_toks or not ref_toks:
+        return {"rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0}
+
+    p1, r1 = ngrams(pred_toks, 1), ngrams(ref_toks, 1)
+    c1 = sum((p1 & r1).values())
+    prec1, rec1 = c1 / len(pred_toks), c1 / len(ref_toks)
+    f1_1 = 2 * prec1 * rec1 / (prec1 + rec1) if (prec1 + rec1) else 0.0
+
+    p2, r2 = ngrams(pred_toks, 2), ngrams(ref_toks, 2)
+    c2 = sum((p2 & r2).values())
+    prec2 = c2 / max(len(pred_toks) - 1, 1)
+    rec2 = c2 / max(len(ref_toks) - 1, 1)
+    f1_2 = 2 * prec2 * rec2 / (prec2 + rec2) if (prec2 + rec2) else 0.0
+
+    lcs = lcs_length(pred_toks, ref_toks)
+    precL, recL = lcs / len(pred_toks), lcs / len(ref_toks)
+    f1_L = 2 * precL * recL / (precL + recL) if (precL + recL) else 0.0
+
+    return {"rouge1": f1_1, "rouge2": f1_2, "rougeL": f1_L}
+
+
+def make_compute_metrics(tokenizer):
     def compute_metrics(eval_preds):
         preds, labels = eval_preds
         preds = np.clip(preds, 0, tokenizer.vocab_size - 1)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
 
-        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        decoded_preds = [p.strip() for p in tokenizer.batch_decode(preds, skip_special_tokens=True)]
+        decoded_labels = [l.strip() for l in tokenizer.batch_decode(labels, skip_special_tokens=True)]
 
-        result = rouge.compute(
-            predictions=[p.strip() for p in decoded_preds],
-            references=[l.strip() for l in decoded_labels],
-            use_stemmer=False,
-        )
-        return {k: round(v * 100, 2) for k, v in result.items()}
+        totals = {"rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0}
+        for pred, label in zip(decoded_preds, decoded_labels):
+            scores = sinhala_rouge(pred, label)
+            for k in totals:
+                totals[k] += scores[k]
+        n = max(len(decoded_preds), 1)
+        result = {k: round(100 * v / n, 2) for k, v in totals.items()}
+
+        # Qualitative spot-check: v01 collapsed into non-Sinhala repetitive
+        # filler under free generation despite a fine teacher-forced loss,
+        # and the old evaluate.load("rouge") metric (0.0 on Sinhala,
+        # regardless of quality) hid that for the entire run. Print actual
+        # decoded predictions every eval epoch so a human can catch a
+        # collapse immediately instead of trusting a number.
+        print("\n[EVAL SAMPLE CHECK]")
+        for i in range(min(3, len(decoded_preds))):
+            print(f"  REF : {decoded_labels[i][:200]}")
+            print(f"  PRED: {decoded_preds[i][:200]}")
+            print()
+
+        return result
 
     return compute_metrics
 
@@ -250,6 +359,7 @@ def main():
 
     base_model_path = get_base_model_path()
     print(f"\n🤖 Loading Tokenizer & Base Model from {base_model_path} ...")
+    _patch_t5_special_tokens_bug()
     tokenizer = AutoTokenizer.from_pretrained(base_model_path)
     base_model = AutoModelForSeq2SeqLM.from_pretrained(
         base_model_path,
