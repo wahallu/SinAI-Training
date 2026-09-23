@@ -117,8 +117,9 @@ def _check_scale_word_consistency(summary: str, article: str) -> str | None:
 # Bound (?<![a-zA-Z])kg(?![a-zA-Z]) ensures English words like 'background'
 # are not mistaken for kilograms.
 _KILO_PATTERNS = (
-    r'(?:කිලෝ\s*ග්‍රෑම්|කිලෝ\s*ග්රෑම්|කිලෝග්‍රෑම්|කිලෝග්රෑම්|කිලෝව(?:ක්|ක|ට)?|'
-    r'කිලෝ(?!\s*(?:මීටර්|මීටර|ලීටර්|ලීටර|වොට්|වෝල්ට්|බයිට්|බිට්|කැලරි|හර්ට්ස්|ජූල්|පැස්කල්|ඇම්පියර්|ඕම්))|'
+    r'(?:කිලෝ\s*ග්‍රෑම්|කිලෝ\s*ග්රෑම්|කිලෝග්‍රෑම්|කිලෝග්රෑම්|'
+    r'කිලෝව(?:ක්|ක|ට)?(?![඀-෿])|'
+    r'කිලෝ(?!\s*(?:මීටර්|මීටර|ලීටර්|ලීටර|වොට්|වෝල්ට්|බයිට්|බිට්|කැලරි|හර්ට්ස්|ජූල්|පැස්කල්|ඇම්පියර්|ඕම්|මී\.|ලී\.))(?![඀-෿])|'
     r'(?i:(?<![a-zA-Z])kg(?![a-zA-Z]))|කි\.ග්‍රෑ\.|කි\.ග්රෑ\.)'
 )
 # Negative lookbehinds prevent matching non-mass loanwords (ටෙලිග්‍රෑම්, ඉන්ස්ටග්‍රෑම්, ඉන්ස්ටාග්‍රෑම්, ප්‍රෝග්‍රෑම්, ඩයග්‍රෑම්)
@@ -161,7 +162,7 @@ _NUM_OR_WORD = rf'(?:{_NUM}|{_WORD_NUMS_ALT})'
 MASS_NUMBER_UNIT_RE = re.compile(
     rf'(?:(?P<num_a>{_NUM_OR_WORD})\s*(?P<unit_a>{_MASS_UNIT_ALT}))'
     rf'|(?:(?P<unit_b>{_MASS_UNIT_ALT})\s*\.?\s*(?P<num_b>{_NUM_OR_WORD}))'
-    rf'|(?P<standalone_kilo>කිලෝව(?:ක්|ක|ට)?)'
+    rf'|(?P<standalone_kilo>කිලෝව(?:ක්|ක|ට)?(?![඀-෿]))'
 )
 
 _KILO_RE = re.compile(_KILO_PATTERNS)
@@ -218,11 +219,23 @@ def check_mass_unit_consistency(summary: str, article: str) -> str | None:
     if not summary or not article:
         return None
 
+    # 1. Number-unit collision (e.g., 460kg in summary vs 460g in article)
+    article_mass_by_num: dict[float, set[str]] = {}
+    for num, unit in extract_mass_unit_pairs(article):
+        article_mass_by_num.setdefault(num, set()).add(unit)
+
+    if article_mass_by_num:
+        for num, unit in extract_mass_unit_pairs(summary):
+            seen_units = article_mass_by_num.get(num)
+            if seen_units and unit not in seen_units:
+                num_display = int(num) if num.is_integer() else num
+                return f"unit_mismatch:{num_display}:{unit}_not_in:{sorted(seen_units)}"
+
     summary_has_kilo = has_kilo_units(summary)
     article_has_kilo = has_kilo_units(article)
     article_has_sub_kilo = has_gram_or_milli_units(article)
 
-    # 1. Fabricated kilograms when article does not have kilograms
+    # 2. Fabricated kilograms when article does not have kilograms
     if summary_has_kilo and not article_has_kilo:
         if article_has_sub_kilo:
             summary_pairs = extract_mass_unit_pairs(summary)
@@ -249,18 +262,6 @@ def check_mass_unit_consistency(summary: str, article: str) -> str | None:
                 return "unit_mismatch:fabricated_kilo:summary_introduces_kilograms_without_basis"
         else:
             return "unit_mismatch:fabricated_kilo:summary_introduces_kilograms_without_basis"
-
-    # 2. Number-unit collision (e.g., 460kg in summary vs 460g in article)
-    article_mass_by_num: dict[float, set[str]] = {}
-    for num, unit in extract_mass_unit_pairs(article):
-        article_mass_by_num.setdefault(num, set()).add(unit)
-
-    if article_mass_by_num:
-        for num, unit in extract_mass_unit_pairs(summary):
-            seen_units = article_mass_by_num.get(num)
-            if seen_units and unit not in seen_units:
-                num_display = int(num) if num.is_integer() else num
-                return f"unit_mismatch:{num_display}:{unit}_not_in:{sorted(seen_units)}"
 
     return None
 
