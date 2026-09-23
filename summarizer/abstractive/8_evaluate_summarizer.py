@@ -12,7 +12,8 @@ adapter; the two output JSON files are then directly comparable, because:
     random.sample() from the full corpus each run.
   * Same metric set for both — ROUGE-1/2/L (native Sinhala grapheme-cluster
     implementation; the standard rouge_score library breaks on Sinhala
-    Unicode), length-band adherence, clean-ending rate, AND the v07-only
+    Unicode), multilingual BERTScore P/R/F1 (xlm-roberta-large, see below),
+    length-band adherence, clean-ending rate, AND the v07-only
     glue/unit-mismatch checks from 7_test_summarizer.py. Applying the glue
     check to v06 too is deliberate: this is the first evaluation where that
     comparison is actually meaningful, since 6_test_summarizer.py never
@@ -31,13 +32,27 @@ partitions by construction. See SUMMARIZATION_NEXT_STEPS.md Phase 1-2 for the
 audit that established this (contrast with the ~81% contamination the OLD
 v06/v07 adapters have against this same frozen test set).
 
+BERTScore complements ROUGE rather than replacing it: ROUGE here is
+grapheme-level n-gram overlap, so a correct summary that paraphrases the
+reference scores near zero. BERTScore embeds both sides with
+xlm-roberta-large (which has real Sinhala pretraining) and matches tokens by
+cosine similarity, so it credits paraphrase. It is scored AFTER all
+generation finishes, one batched call per bucket, so the LLM is generating
+without a second model resident on the GPU and the encoder passes run at full
+batch width. rescale_with_baseline=False — bert-score ships no Sinhala
+baseline file, so raw (un-rescaled) F1 is the only comparable number; it sits
+in a compressed high range (~0.7-0.9 typical), and only differences between
+adapters on this same frozen subset are meaningful, not the absolute value.
+
 Usage:
     python abstractive/8_evaluate_summarizer.py --adapter v06
     python abstractive/8_evaluate_summarizer.py --adapter v07
     python abstractive/8_evaluate_summarizer.py --adapter v06 --samples 20   # smoke test
+    python abstractive/8_evaluate_summarizer.py --adapter v06 --no-bertscore
 """
 
 import re
+from unsloth import FastLanguageModel
 import json
 import time
 import argparse
@@ -50,7 +65,6 @@ from collections import defaultdict, Counter
 import torch
 import numpy as np
 from transformers import AutoTokenizer
-from unsloth import FastLanguageModel
 from peft import PeftModel
 
 from data_quality_checks import detect_word_glue, check_numeric_unit_consistency
@@ -73,6 +87,14 @@ MANIFEST_PATH = Path("/home/jovyan/summarizer/data/summarization_frozen_split_ma
 OUTPUT_DIR = Path("/home/jovyan/summarizer/6_eval_results")
 
 MAX_SEQ_LENGTH = 2048
+
+# Multilingual BERTScore. xlm-roberta-large is the standard multilingual
+# choice and covers Sinhala; keep BERTSCORE_MODEL in sync with
+# work/serve_sinai.py's constant of the same name so /compare and this
+# offline eval report the same number for the same pair.
+BERTSCORE_MODEL = "xlm-roberta-large"
+BERTSCORE_LANG = "si"
+BERTSCORE_BATCH_SIZE = 32
 
 # Trained compression bands per bucket (token-ratio space) — identical in
 # 6_train_summarizer.BUCKET_FILTERS and 7_train_summarizer.BUCKET_FILTERS,
@@ -168,6 +190,86 @@ def rouge_scores(pred: str, ref: str) -> dict:
     rec = lcs / len(ref_toks)
     out["rougeL"] = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
     return out
+
+
+# ──────────────────────────────────────────────
+# MULTILINGUAL BERTSCORE (xlm-roberta-large)
+# ──────────────────────────────────────────────
+_BERTSCORER = None
+
+
+def get_bertscorer(batch_size: int, device: str):
+    """Builds the BERTScorer once and reuses it across all three buckets.
+
+    bert_score.score() reloads the encoder on every call, which would mean
+    three ~2.2GB loads per run; the scorer object holds it. Returns None if
+    bert-score is missing or the encoder won't load.
+    """
+    global _BERTSCORER
+    if _BERTSCORER is not None:
+        return _BERTSCORER
+
+    try:
+        from bert_score import BERTScorer
+    except ImportError:
+        print("[WARNING] bert-score not installed (`pip install bert-score`) — "
+              "skipping BERTScore.")
+        return None
+
+    try:
+        _BERTSCORER = BERTScorer(
+            model_type=BERTSCORE_MODEL,
+            lang=BERTSCORE_LANG,
+            rescale_with_baseline=False,
+            device=device,
+            batch_size=batch_size,
+        )
+    except Exception as e:
+        print(f"[WARNING] Could not load {BERTSCORE_MODEL} on {device} "
+              f"({type(e).__name__}: {e}) — skipping BERTScore.")
+        return None
+    return _BERTSCORER
+
+
+def compute_bertscore(preds: list, refs: list, batch_size: int, device: str) -> dict | None:
+    """Batched BERTScore for one bucket. Returns per-sample P/R/F1 lists.
+
+    Returns None if bert-score is unavailable or scoring fails — the eval is
+    still fully usable without it, so a missing/broken encoder must never
+    take down a multi-hour generation run whose outputs are already in hand.
+
+    Empty predictions are scored 0.0 rather than passed to the encoder: an
+    empty candidate gives BERTScore nothing but special tokens to match and
+    yields a meaninglessly high similarity.
+    """
+    scorer = get_bertscorer(batch_size, device)
+    if scorer is None:
+        return None
+
+    n = len(preds)
+    P = [0.0] * n
+    R = [0.0] * n
+    F = [0.0] * n
+    scorable = [i for i in range(n) if preds[i].strip() and refs[i].strip()]
+    if not scorable:
+        return {"precision": P, "recall": R, "f1": F}
+
+    try:
+        p, r, f = scorer.score(
+            [preds[i] for i in scorable],
+            [refs[i] for i in scorable],
+            batch_size=batch_size,
+        )
+    except Exception as e:
+        print(f"[WARNING] BERTScore failed ({type(e).__name__}: {e}) — "
+              "reporting ROUGE-only results.")
+        return None
+
+    for slot, i in enumerate(scorable):
+        P[i] = float(p[slot])
+        R[i] = float(r[slot])
+        F[i] = float(f[slot])
+    return {"precision": P, "recall": R, "f1": F}
 
 
 # ──────────────────────────────────────────────
@@ -318,6 +420,14 @@ def main():
                               "(smoke test). Default: all 300.")
     parser.add_argument("--benchmark", action="store_true",
                          help="Run verification on police drug raid benchmark article.")
+    parser.add_argument("--no-bertscore", action="store_true",
+                         help="Skip multilingual BERTScore (ROUGE + length "
+                              "metrics only).")
+    parser.add_argument("--bertscore-batch-size", type=int, default=BERTSCORE_BATCH_SIZE,
+                         help=f"BERTScore encoder batch size (default {BERTSCORE_BATCH_SIZE}). "
+                              "Lower it if the GPU is tight.")
+    parser.add_argument("--bertscore-device", default="cuda" if torch.cuda.is_available() else "cpu",
+                         help="Device for the BERTScore encoder (default: cuda if available).")
     args = parser.parse_args()
 
     if args.benchmark:
@@ -351,6 +461,12 @@ def main():
 
     results = defaultdict(list)
     details = []
+    # Per-bucket generation output, kept aligned with results[bucket] by index,
+    # so BERTScore can be scored in one batched call per bucket after all
+    # generation is done (see compute_bertscore).
+    bs_preds = defaultdict(list)
+    bs_refs = defaultdict(list)
+    bs_detail_idx = defaultdict(list)
 
     for i, rec in enumerate(records, 1):
         article = rec["content"].strip()
@@ -380,6 +496,9 @@ def main():
                 "unit_mismatch": unit_hit,
                 "latency": elapsed,
             })
+            bs_preds[bucket].append(pred)
+            bs_refs[bucket].append(reference)
+            bs_detail_idx[bucket].append(len(details))
             details.append({
                 "sample": i, "bucket": bucket, "url": rec.get("url", ""),
                 "prediction": pred, "reference": reference,
@@ -394,12 +513,48 @@ def main():
                   f"{'✓unit' if not unit_hit else '✗unit'} "
                   f"R-L={scores['rougeL']:.3f} ({elapsed:.1f}s)")
 
+    # ── Multilingual BERTScore (batched, after generation) ──
+    bertscore_buckets = set()
+    if args.no_bertscore:
+        print("\nBERTScore: skipped (--no-bertscore).")
+    else:
+        print(f"\n🔹 Scoring BERTScore ({BERTSCORE_MODEL}, batch={args.bertscore_batch_size}, "
+              f"device={args.bertscore_device})...")
+        # Free the generation model's activation cache first — the encoder
+        # needs its own headroom and nothing below generates again.
+        torch.cuda.empty_cache()
+        for bucket in results:
+            scores = compute_bertscore(
+                bs_preds[bucket], bs_refs[bucket],
+                batch_size=args.bertscore_batch_size,
+                device=args.bertscore_device,
+            )
+            if scores is None:
+                break
+            bertscore_buckets.add(bucket)
+            for idx in range(len(results[bucket])):
+                prec = scores["precision"][idx]
+                rec_ = scores["recall"][idx]
+                f1_ = scores["f1"][idx]
+                results[bucket][idx].update({
+                    "bert_score_precision": prec,
+                    "bert_score_recall": rec_,
+                    "bert_score_f1": f1_,
+                })
+                details[bs_detail_idx[bucket][idx]].update({
+                    "bert_score_precision": round(prec, 4),
+                    "bert_score_recall": round(rec_, 4),
+                    "bert_score_f1": round(f1_, 4),
+                })
+            print(f"   {bucket:<7} BERTScore-F1 = "
+                  f"{np.mean(scores['f1']):.4f} ({len(scores['f1'])} samples)")
+
     # ── Report ──
     print("\n" + "=" * 76)
     print(f"  {args.adapter}_frozensplit — FROZEN EVAL SUBSET SUMMARY (leakage-controlled)")
     print("=" * 76)
-    print(f"{'bucket':<8} {'R-L':>6} {'R-1':>6} {'R-2':>6} {'ratio':>6} "
-          f"{'in-band':>8} {'clean-end':>10} {'glue':>6} {'unit':>6}")
+    print(f"{'bucket':<8} {'R-L':>6} {'R-1':>6} {'R-2':>6} {'BS-P':>6} {'BS-R':>6} "
+          f"{'BS-F1':>6} {'ratio':>6} {'in-band':>8} {'clean-end':>10} {'glue':>6} {'unit':>6}")
     summary = {}
     for bucket, rows in results.items():
         rl = np.mean([r["rougeL"] for r in rows])
@@ -410,10 +565,18 @@ def main():
         clean = np.mean([r["ends_clean"] for r in rows]) * 100
         glue_pct = np.mean([r["glue"] for r in rows]) * 100
         unit_pct = np.mean([r["unit_mismatch"] for r in rows]) * 100
-        print(f"{bucket:<8} {rl:>6.3f} {r1:>6.3f} {r2:>6.3f} {ratio:>6.2f} "
+        has_bs = bucket in bertscore_buckets
+        bs_p = np.mean([r["bert_score_precision"] for r in rows]) if has_bs else float("nan")
+        bs_r = np.mean([r["bert_score_recall"] for r in rows]) if has_bs else float("nan")
+        bs_f1 = np.mean([r["bert_score_f1"] for r in rows]) if has_bs else float("nan")
+        print(f"{bucket:<8} {rl:>6.3f} {r1:>6.3f} {r2:>6.3f} "
+              f"{bs_p:>6.3f} {bs_r:>6.3f} {bs_f1:>6.3f} {ratio:>6.2f} "
               f"{in_band:>7.0f}% {clean:>9.0f}% {glue_pct:>5.0f}% {unit_pct:>5.0f}%")
         summary[bucket] = {
             "rougeL": float(rl), "rouge1": float(r1), "rouge2": float(r2),
+            "bert_score_precision": float(bs_p) if has_bs else None,
+            "bert_score_recall": float(bs_r) if has_bs else None,
+            "bert_score_f1": float(bs_f1) if has_bs else None,
             "mean_ratio": float(ratio), "in_band_pct": float(in_band),
             "clean_end_pct": float(clean), "glue_pct": float(glue_pct),
             "unit_mismatch_pct": float(unit_pct),
@@ -433,6 +596,8 @@ def main():
             "adapter_path": str(adapter_path),
             "eval_dataset": str(EVAL_DATASET),
             "n_articles": len(records),
+            "bertscore_model": BERTSCORE_MODEL if bertscore_buckets else None,
+            "bertscore_rescale_with_baseline": False,
             "summary": summary,
             "details": details,
         }, f, ensure_ascii=False, indent=2)

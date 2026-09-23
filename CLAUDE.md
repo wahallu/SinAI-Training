@@ -294,4 +294,28 @@ what users see today.
 
 **v07 status (as of 2026-08-22):** v07 (`abstractive/7_train_summarizer.py`, trained on the 35,547-row cleaned corpus) is fully trained and has a tracked eval (`6_eval_results/v07_eval_20260811_094434.json`) — it is not experimental/unfinished. `find_latest_adapters()` in `serve_sinai.py` auto-serves it in production today ahead of v06, purely because it version-sorts higher, independent of quality. On the one existing comparable evaluation (same 45-output protocol as v06's), v07 currently scores *worse* than v06 on ROUGE-L across all three length bands. **Don't trust that comparison** — a split-contamination audit (`abstractive/8_audit_split_contamination.py`) found that both `6_train_summarizer.py` and `7_train_summarizer.py` split their flat short/medium/long sample list at the sample level rather than the article level, and as a result ~81% of a newly built article-level frozen test set (`data/summarization_frozen_test.jsonl`, seed 42, manifest at `data/summarization_frozen_split_manifest.json`) was already present in *each* adapter's original training data. A leakage-controlled re-evaluation on the frozen split is planned but not yet complete; see `summarizer/SUMMARIZATION_NEXT_STEPS.md` for the full status and phased plan.
 
+**Multilingual BERTScore (xlm-roberta-large).** Every Sinhala similarity
+metric in this repo before now was surface-overlap (native grapheme-cluster
+ROUGE, char-F1, GLEU), so a summary that is right but paraphrased scores near
+zero. BERTScore is now computed in two places, both keyed off a
+`BERTSCORE_MODEL = "xlm-roberta-large"` constant that must stay in sync:
+`summarizer/abstractive/8_evaluate_summarizer.py` (offline eval — scored after
+all generation finishes, one batched call per bucket via a single reused
+`BERTScorer`; `--no-bertscore` / `--bertscore-batch-size` / `--bertscore-device`
+control it, and results land in both `summary[bucket]` and every `details`
+entry as `bert_score_{precision,recall,f1}`) and `work/serve_sinai.py`
+(`/compare` — lazy-loaded process-wide singleton via `get_bertscorer()`, CUDA
+with CPU fallback, so the encoder only costs VRAM on boxes that actually
+score against a `reference_text`). Both paths are non-fatal by construction:
+a missing package, a failed load, or an OOM returns null/skipped scores
+rather than taking down a multi-hour eval or 500-ing `/compare`.
+
+Read the raw numbers with care: `rescale_with_baseline=False` (bert-score
+ships no Sinhala baseline file), so scores sit in a compressed high band —
+measured on this box, an *unrelated* Sinhala sentence pair still scores
+F1≈0.89. Only differences between adapters on the same eval set mean
+anything; the absolute value does not.
+`summarizer/abstractive/8_bertscore_smoke_test.py` verifies the encoder loads
+and discriminates on this box.
+
 **Length conditioning (v06+):** `work/tasks/summarizer.py`'s `prompt_summarizer()` accepts a `length` param (`short`/`medium`/`long`) that selects v06's length-conditioned prompt; omitting it builds the legacy v02-v05 fixed-instruction prompt instead. `work/serve_sinai.py` auto-defaults `length` to `"medium"` per-request when the resolved adapter's version is >= `SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION` (currently 6.0, see `run_generation()`), so callers that don't send `length` still get a matching prompt for v06+, and v02-v05 behavior is unaffected. `/compare` checks this per adapter in the comparison set, so mixed v02-v05/v06+ comparisons get the correct prompt for each. Update `SUMMARIZER_LENGTH_CONDITIONED_FROM_VERSION` if a future summarizer version changes the prompt format again.

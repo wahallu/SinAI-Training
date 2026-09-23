@@ -968,6 +968,105 @@ def gleu_score(pred: str, ref: str) -> float:
     return sentence_gleu(refs, hyp)
 
 
+# ─────────────────────────────────────────────
+# MULTILINGUAL BERTSCORE (xlm-roberta-large)
+# ─────────────────────────────────────────────
+# ROUGE/char-F1/GLEU above are all surface-overlap metrics: a summary that
+# says the right thing in different words scores near zero. BERTScore embeds
+# both sides with xlm-roberta-large (real Sinhala pretraining) and matches
+# tokens by cosine similarity, so it credits paraphrase. Keep
+# BERTSCORE_MODEL in sync with summarizer/abstractive/8_evaluate_summarizer.py
+# so /compare and the offline eval report the same number for the same pair.
+#
+# rescale_with_baseline=False — bert-score ships no Sinhala baseline file, so
+# raw F1 sits in a compressed high range (~0.7-0.9 typical). Compare adapters
+# against each other, not against an absolute threshold.
+BERTSCORE_MODEL = "xlm-roberta-large"
+BERTSCORE_LANG = "si"
+
+_BERTSCORER = None
+_BERTSCORE_LOCK = threading.Lock()
+# Set once a load attempt has failed, so a box without the package or without
+# room for the encoder doesn't pay a multi-second retry on every /compare.
+_BERTSCORE_UNAVAILABLE = False
+
+
+def get_bertscorer():
+    """Lazily builds the process-wide BERTScorer, or returns None.
+
+    Loaded on first use rather than at import so the ~2.2GB encoder only
+    costs VRAM on boxes that actually call /compare with a reference. Falls
+    back to CPU if CUDA can't take it — a slow BERTScore is still better than
+    no BERTScore, and the LLM adapters have first claim on the GPU.
+    """
+    global _BERTSCORER, _BERTSCORE_UNAVAILABLE
+
+    if _BERTSCORER is not None or _BERTSCORE_UNAVAILABLE:
+        return _BERTSCORER
+
+    with _BERTSCORE_LOCK:
+        # Re-check inside the lock: two concurrent /compare calls must not
+        # both load a copy of the encoder.
+        if _BERTSCORER is not None or _BERTSCORE_UNAVAILABLE:
+            return _BERTSCORER
+
+        try:
+            from bert_score import BERTScorer
+        except ImportError:
+            print("[WARNING] bert-score not installed (`pip install bert-score`) — "
+                  "/compare will report BERTScore as null.")
+            _BERTSCORE_UNAVAILABLE = True
+            return None
+
+        for device in ("cuda", "cpu") if torch.cuda.is_available() else ("cpu",):
+            try:
+                print(f"[BERTScore] Loading {BERTSCORE_MODEL} on {device}...")
+                _BERTSCORER = BERTScorer(
+                    model_type=BERTSCORE_MODEL,
+                    lang=BERTSCORE_LANG,
+                    rescale_with_baseline=False,
+                    device=device,
+                )
+                print(f"[BERTScore] Ready on {device} ✅")
+                return _BERTSCORER
+            except Exception as e:
+                print(f"[WARNING] BERTScore load failed on {device}: "
+                      f"{type(e).__name__}: {e}")
+                if device == "cuda":
+                    torch.cuda.empty_cache()
+
+        _BERTSCORE_UNAVAILABLE = True
+        return None
+
+
+def bertscore_metrics(pred: str, ref: str) -> dict:
+    """P/R/F1 for one pred/ref pair. Never raises — /compare must not 500
+    because a metric encoder is missing or the GPU is tight; the fields come
+    back as None instead."""
+    empty = {"bert_score_precision": None, "bert_score_recall": None, "bert_score_f1": None}
+    if not pred.strip() or not ref.strip():
+        return empty
+
+    scorer = get_bertscorer()
+    if scorer is None:
+        return empty
+
+    try:
+        p, r, f1 = scorer.score([pred], [ref])
+        return {
+            "bert_score_precision": round(float(p[0]), 4),
+            "bert_score_recall": round(float(r[0]), 4),
+            "bert_score_f1": round(float(f1[0]), 4),
+        }
+    except Exception as e:
+        print(f"[WARNING] BERTScore scoring failed ({type(e).__name__}: {e}) — "
+              "returning null BERTScore for this pair.")
+        traceback.print_exc()
+        if isinstance(e, torch.cuda.OutOfMemoryError):
+            torch.cuda.empty_cache()
+        return empty
+
+
 def rouge_scores(pred: str, ref: str) -> dict:
     def ngrams(tokens, n):
         return Counter(tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1))
@@ -1151,6 +1250,7 @@ async def compare_models(req: CompareRequest):
             cf1 = char_f1(output_text, ref)
             gleu = gleu_score(output_text, ref)
             rouge = rouge_scores(output_text, ref)
+            bert = bertscore_metrics(output_text, ref)
             over_corr = over_correction_rate(output_text, req.input_text, ref)
 
             metrics = {
@@ -1162,6 +1262,9 @@ async def compare_models(req: CompareRequest):
                 "rouge1": round(rouge["rouge1"], 4),
                 "rouge2": round(rouge["rouge2"], 4),
                 "rougeL": round(rouge["rougeL"], 4),
+                "bert_score_precision": bert["bert_score_precision"],
+                "bert_score_recall": bert["bert_score_recall"],
+                "bert_score_f1": bert["bert_score_f1"],
                 "over_correction": over_corr,
                 "exact_match": output_text.strip() == ref.strip()
             }
