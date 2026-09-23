@@ -105,9 +105,23 @@ REPETITION_PENALTY = 1.15
 
 import re
 
+try:
+    from tasks.sinhala_degluer import deglue_virama_boundaries, is_virama_glued
+except ImportError:
+    try:
+        from sinhala_degluer import deglue_virama_boundaries, is_virama_glued
+    except ImportError:
+        import sys
+        from pathlib import Path
+        sys.path.append(str(Path(__file__).resolve().parent))
+        from sinhala_degluer import deglue_virama_boundaries, is_virama_glued
+
 
 def heal_sinhala_text(text: str) -> str:
-    """Heals broken Sinhala subword BPE token splits (e.g. 'ප්‍ර දේශයේ' -> 'ප්‍රදේශයේ')."""
+    """Heals broken Sinhala subword BPE token splits (e.g. 'ප්‍ර දේශයේ' -> 'ප්‍රදේශයේ')
+    and de-glues concatenated Sinhala words across virama/hal-akuru boundaries
+    (e.g. 'හෙරොයින්කිලෝවක්' -> 'හෙරොයින් කිලෝවක්', 'අනෙකුත්දෙදෙනාගේ' -> 'අනෙකුත් දෙදෙනාගේ',
+    'ඔවුන්සතුව' -> 'ඔවුන් සතුව', 'ඔවුන්රැගෙන' -> 'ඔවුන් රැගෙන', 'දැන්දිගටම' -> 'දැන් දිගටම')."""
     if not text:
         return text
     # 1. Re-attach single-consonant Rakaransaya diacritic prefixes (e.g. 'ප්‍ර ', 'ක්‍ර ') separated by spaces
@@ -124,8 +138,12 @@ def heal_sinhala_text(text: str) -> str:
     for pattern, repl in splits:
         text = re.sub(pattern, repl, text)
 
+    # 3. De-glue concatenated Sinhala words across virama/hal-akuru boundaries
+    text = deglue_virama_boundaries(text)
+
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
+
 
 
 def decode(tokenizer, outputs, prompt_len: int) -> tuple[str, int]:
